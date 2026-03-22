@@ -215,19 +215,19 @@ def _parse_args():
     p.add_argument(
         "--inv-dump-dir",
         type=str,
-        default=None,
+        default=r'C:\Users\Eshel\workspace\Elad_miklat\accuracy_results\inv',
         help="Directory for mean-inventory accuracy outputs.",
     )
     p.add_argument(
         "--order-dump-dir",
         type=str,
-        default=None,
+        default=r'C:\Users\Eshel\workspace\Elad_miklat\accuracy_results\order',
         help="Directory for mean-order accuracy outputs.",
     )
     p.add_argument(
         "--loss-dump-dir",
         type=str,
-        default=None,
+        default=r'C:\Users\Eshel\workspace\Elad_miklat\accuracy_results\loss',
         help="Directory for mean-loss accuracy outputs.",
     )
     p.add_argument(
