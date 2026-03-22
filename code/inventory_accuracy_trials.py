@@ -1,14 +1,14 @@
-"""Repeatability/accuracy trial for inventory simulation results.
+"""Repeatability/accuracy trial for inventory/order/loss simulation results.
 
 For one fixed setting (same inter-demand PH, lead-time PH, s, S), this script:
 1) Runs the simulation multiple times (default: 10 trials).
-2) Computes mean inventory level over time for each trial.
+2) Computes mean inventory, mean orders, and mean loss trajectories for each trial.
 3) Computes relative error (%) of each trial from the across-trials mean.
-4) Computes 95% confidence limits (CL) of the mean inventory across trials.
+4) Computes 95% confidence limits (CL) across trials.
 
 Output:
 - A pandas DataFrame with `horizon` rows (default 100), one row per time epoch.
-- Saved as both pickle and CSV.
+- Produced for each metric (inv/order/loss) and saved as both pickle and CSV.
 """
 
 from __future__ import annotations
@@ -16,11 +16,19 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 from typing import Optional
+import sys
 
 import numpy as np
 import pandas as pd
 
-from inventory_simpy_ph import designated_ph_generator, simulate_given_setting
+try:
+    from inventory_simpy_ph import designated_ph_generator, simulate_given_setting
+except ModuleNotFoundError:
+    # Support running via compatibility launcher from project root.
+    code_dir = Path(__file__).resolve().parent
+    if str(code_dir) not in sys.path:
+        sys.path.insert(0, str(code_dir))
+    from inventory_simpy_ph import designated_ph_generator, simulate_given_setting
 
 
 def _render_progress(current: int, total: int, width: int = 36) -> None:
@@ -84,6 +92,30 @@ def _compute_mean_inventory_from_dist(inv_dist: np.ndarray) -> np.ndarray:
     return inv_dist @ levels
 
 
+def _build_metric_df(metric_trials: np.ndarray, metric_name: str) -> pd.DataFrame:
+    """Build per-epoch repeatability DataFrame for one metric."""
+    trials, horizon = metric_trials.shape
+    avg = metric_trials.mean(axis=0)
+    eps = 1e-12
+    rel_err_pct = np.abs(metric_trials - avg[None, :]) / np.maximum(np.abs(avg[None, :]), eps) * 100.0
+
+    std_t = metric_trials.std(axis=0, ddof=1)
+    t_crit = 2.262 if trials == 10 else 1.96
+    half_width = t_crit * std_t / np.sqrt(float(trials))
+    ci_low = avg - half_width
+    ci_high = avg + half_width
+
+    data = {"epoch": np.arange(1, horizon + 1, dtype=int)}
+    for j in range(trials):
+        data[f"mean_{metric_name}_trial_{j + 1}"] = metric_trials[j]
+    data[f"avg_mean_{metric_name}_all_trials"] = avg
+    for j in range(trials):
+        data[f"rel_err_pct_trial_{j + 1}"] = rel_err_pct[j]
+    data["ci95_low"] = ci_low
+    data["ci95_high"] = ci_high
+    return pd.DataFrame(data)
+
+
 def run_accuracy_trial(
     trials: int = 10,
     replications: int = 50000,
@@ -95,7 +127,7 @@ def run_accuracy_trial(
     S: Optional[int] = None,
     show_progress: bool = True,
     model_num: Optional[int] = None,
-) -> tuple[pd.DataFrame, dict]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     """Run repeated simulations for one fixed setting and return DataFrame + metadata."""
     if trials < 2:
         raise ValueError("trials must be >= 2 for relative-error/CL analysis.")
@@ -116,6 +148,8 @@ def run_accuracy_trial(
         model_num_val = int(model_num)
 
     mean_inventory_trials = np.zeros((trials, horizon), dtype=float)
+    mean_order_trials = np.zeros((trials, horizon), dtype=float)
+    mean_loss_trials = np.zeros((trials, horizon), dtype=float)
     trial_seeds = (
         [None] * trials
         if seed is None
@@ -125,7 +159,7 @@ def run_accuracy_trial(
     if show_progress:
         _render_progress(0, trials)
     for j in range(trials):
-        _, inv_dist, _, _ = simulate_given_setting(
+        _, inv_dist, orders, loss = simulate_given_setting(
             inter_demand_ph=inter_ph,
             lead_time_ph=lead_ph,
             s=s_val,
@@ -135,35 +169,14 @@ def run_accuracy_trial(
             seed=trial_seeds[j],
         )
         mean_inventory_trials[j] = _compute_mean_inventory_from_dist(inv_dist)
+        mean_order_trials[j] = orders
+        mean_loss_trials[j] = loss
         if show_progress:
             _render_progress(j + 1, trials)
 
-    avg_mean_inventory = mean_inventory_trials.mean(axis=0)
-    eps = 1e-12
-    rel_err_pct = (
-        np.abs(mean_inventory_trials - avg_mean_inventory[None, :])
-        / np.maximum(np.abs(avg_mean_inventory[None, :]), eps)
-        * 100.0
-    )
-
-    std_t = mean_inventory_trials.std(axis=0, ddof=1)
-    # 95% CL with t-critical for df=trials-1.
-    # For trials=10 (default), t_0.975,9 ~= 2.262.
-    t_crit = 2.262 if trials == 10 else 1.96
-    half_width = t_crit * std_t / np.sqrt(float(trials))
-    ci_low = avg_mean_inventory - half_width
-    ci_high = avg_mean_inventory + half_width
-
-    data = {"epoch": np.arange(1, horizon + 1, dtype=int)}
-    for j in range(trials):
-        data[f"mean_inv_trial_{j + 1}"] = mean_inventory_trials[j]
-    data["avg_mean_inv_all_trials"] = avg_mean_inventory
-    for j in range(trials):
-        data[f"rel_err_pct_trial_{j + 1}"] = rel_err_pct[j]
-    data["ci95_low"] = ci_low
-    data["ci95_high"] = ci_high
-
-    df = pd.DataFrame(data)
+    df_inv = _build_metric_df(mean_inventory_trials, metric_name="inv")
+    df_order = _build_metric_df(mean_order_trials, metric_name="order")
+    df_loss = _build_metric_df(mean_loss_trials, metric_name="loss")
 
     meta = {
         "trials": trials,
@@ -178,11 +191,11 @@ def run_accuracy_trial(
         "lead_scv": lead_scv,
         "model_num": model_num_val,
     }
-    return df, meta
+    return df_inv, df_order, df_loss, meta
 
 
 def _parse_args():
-    p = argparse.ArgumentParser(description="Repeatability test for mean inventory trajectory.")
+    p = argparse.ArgumentParser(description="Repeatability test for mean inventory/order/loss trajectories.")
     p.add_argument("--trials", type=int, default=10, help="Number of repeated runs per setting.")
     p.add_argument("--replications", type=int, default=50000, help="Replications per trial.")
     p.add_argument("--horizon", type=int, default=100, help="Time horizon.")
@@ -192,18 +205,30 @@ def _parse_args():
     p.add_argument("--s", type=int, default=None, help="Optional fixed s (must provide S too).")
     p.add_argument("--S", type=int, default=None, help="Optional fixed S in [5,30].")
     p.add_argument(
-        "--output-prefix",
-        type=str,
-        default="inventory_accuracy_trial",
-        help="Optional prefix for auxiliary outputs.",
-    )
-    p.add_argument(
         "--dump-dir",
         "--output-dir",
         dest="dump_dir",
         type=str,
         default=".",
-        help="Directory where results are dumped (pickle + csv).",
+        help="Fallback directory for outputs when specific metric dirs are not provided.",
+    )
+    p.add_argument(
+        "--inv-dump-dir",
+        type=str,
+        default=None,
+        help="Directory for mean-inventory accuracy outputs.",
+    )
+    p.add_argument(
+        "--order-dump-dir",
+        type=str,
+        default=None,
+        help="Directory for mean-order accuracy outputs.",
+    )
+    p.add_argument(
+        "--loss-dump-dir",
+        type=str,
+        default=None,
+        help="Directory for mean-loss accuracy outputs.",
     )
     p.add_argument(
         "--no-progress",
@@ -221,7 +246,7 @@ def _parse_args():
 
 def main():
     args = _parse_args()
-    df, meta = run_accuracy_trial(
+    df_inv, df_order, df_loss, meta = run_accuracy_trial(
         trials=args.trials,
         replications=args.replications,
         horizon=args.horizon,
@@ -234,24 +259,46 @@ def main():
         model_num=args.model_num,
     )
 
-    out_dir = Path(args.dump_dir).resolve()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    default_out_dir = Path(args.dump_dir).resolve()
+    inv_dir = Path(args.inv_dump_dir).resolve() if args.inv_dump_dir else default_out_dir
+    order_dir = Path(args.order_dump_dir).resolve() if args.order_dump_dir else default_out_dir
+    loss_dir = Path(args.loss_dump_dir).resolve() if args.loss_dump_dir else default_out_dir
+    inv_dir.mkdir(parents=True, exist_ok=True)
+    order_dir.mkdir(parents=True, exist_ok=True)
+    loss_dir.mkdir(parents=True, exist_ok=True)
 
     scv_token = _format_float_for_filename(float(meta["lead_scv"]))
-    base = f"inv_{int(meta['S'])}_{int(meta['s'])}_{int(meta['replications'])}_{scv_token}_{int(meta['model_num'])}"
-    pkl_path = out_dir / f"{base}.pkl"
-    csv_path = out_dir / f"{base}.csv"
+    common = f"{int(meta['S'])}_{int(meta['s'])}_{int(meta['replications'])}_{scv_token}_{int(meta['model_num'])}"
+    inv_pkl = inv_dir / f"inv_{common}.pkl"
+    inv_csv = inv_dir / f"inv_{common}.csv"
+    order_pkl = order_dir / f"order_{common}.pkl"
+    order_csv = order_dir / f"order_{common}.csv"
+    loss_pkl = loss_dir / f"loss_{common}.pkl"
+    loss_csv = loss_dir / f"loss_{common}.csv"
 
-    df.to_pickle(pkl_path)
-    df.to_csv(csv_path, index=False)
+    df_inv.to_pickle(inv_pkl)
+    df_inv.to_csv(inv_csv, index=False)
+    df_order.to_pickle(order_pkl)
+    df_order.to_csv(order_csv, index=False)
+    df_loss.to_pickle(loss_pkl)
+    df_loss.to_csv(loss_csv, index=False)
 
     print("Finished repeatability trial.")
     print("Setting:", meta)
-    print(f"Dump directory: {out_dir}")
-    print(f"Saved DataFrame pickle: {pkl_path}")
-    print(f"Saved DataFrame csv: {csv_path}")
-    print("DataFrame shape:", df.shape)
-    print(df.head(5).to_string(index=False))
+    print(f"Inventory dump directory: {inv_dir}")
+    print(f"Order dump directory: {order_dir}")
+    print(f"Loss dump directory: {loss_dir}")
+    print(f"Saved inventory pickle: {inv_pkl}")
+    print(f"Saved inventory csv: {inv_csv}")
+    print(f"Saved order pickle: {order_pkl}")
+    print(f"Saved order csv: {order_csv}")
+    print(f"Saved loss pickle: {loss_pkl}")
+    print(f"Saved loss csv: {loss_csv}")
+    print("Inventory DataFrame shape:", df_inv.shape)
+    print("Order DataFrame shape:", df_order.shape)
+    print("Loss DataFrame shape:", df_loss.shape)
+    print("Inventory head (first 5 rows):")
+    print(df_inv.head(5).to_string(index=False))
 
 
 if __name__ == "__main__":
