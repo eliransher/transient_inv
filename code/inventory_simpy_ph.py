@@ -275,17 +275,30 @@ def _gen_coxian_extreme_ph(size: int, target_mean: float, rng: np.random.Generat
     return _ph_from_alpha_T(alpha=alpha, T=T, target_mean=target_mean)
 
 
+def _scv_from_moments(moments: np.ndarray) -> float:
+    """Compute SCV from first two raw moments."""
+    m1 = float(moments[0])
+    m2 = float(moments[1])
+    if m1 <= 0:
+        return float("inf")
+    var = max(0.0, m2 - m1 * m1)
+    return var / (m1 * m1)
+
+
 def generate_random_ph_wide(
     size: int,
     target_mean: float,
     rng: np.random.Generator,
     max_tries: int = 200,
+    max_scv: float = 20.0,
 ) -> PHDistribution:
     """Wide PH generator aligned with ph_summary_table.py family mix."""
     if size <= 0:
         raise ValueError("size must be positive.")
     if target_mean <= 0:
         raise ValueError("target_mean must be positive.")
+    if max_scv <= 0:
+        raise ValueError("max_scv must be positive.")
 
     families = ("base", "erlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
     probs = np.array([0.20, 0.14, 0.18, 0.16, 0.16, 0.16], dtype=float)
@@ -307,14 +320,25 @@ def generate_random_ph_wide(
                 ph = _gen_coxian_extreme_ph(size=size, target_mean=target_mean, rng=rng)
 
             moments = ph.moments
-            if np.all(np.isfinite(moments)) and np.all(moments > 0) and np.max(moments) < 1e300:
+            scv = _scv_from_moments(moments)
+            if (
+                np.all(np.isfinite(moments))
+                and np.all(moments > 0)
+                and np.max(moments) < 1e300
+                and np.isfinite(scv)
+                and scv <= max_scv
+            ):
                 return ph
         except np.linalg.LinAlgError:
             continue
         except FloatingPointError:
             continue
 
-    return generate_random_ph(size=size, target_mean=target_mean, rng=rng)
+    fallback = generate_random_ph(size=size, target_mean=target_mean, rng=rng)
+    if _scv_from_moments(fallback.moments) <= max_scv:
+        return fallback
+    # Guaranteed low-SCV fallback.
+    return _gen_erlang_like_ph(size=size, target_mean=target_mean)
 
 
 def _sample_ph_size(max_size: int, rng: np.random.Generator) -> int:
@@ -345,9 +369,10 @@ def designated_ph_generator(
     size: int,
     rng: np.random.Generator,
     target_mean: float = 1.0,
+    max_scv: float = 20.0,
 ) -> PHDistribution:
     """Designated PH-generation function (size-driven API)."""
-    return generate_random_ph_wide(size=size, target_mean=target_mean, rng=rng)
+    return generate_random_ph_wide(size=size, target_mean=target_mean, rng=rng, max_scv=max_scv)
 
 
 def exponential_ph(rate: float = 1.0) -> PHDistribution:
