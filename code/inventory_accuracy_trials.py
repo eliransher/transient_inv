@@ -197,7 +197,7 @@ def run_accuracy_trial(
 def _parse_args():
     p = argparse.ArgumentParser(description="Repeatability test for mean inventory/order/loss trajectories.")
     p.add_argument("--trials", type=int, default=10, help="Number of repeated runs per setting.")
-    p.add_argument("--replications", type=int, default=50000, help="Replications per trial.")
+    p.add_argument("--replications", type=int, default=50000, help="Replications per trials.")
     p.add_argument("--horizon", type=int, default=100, help="Time horizon.")
     p.add_argument("--seed", type=int, default=None, help="Optional top-level seed.")
     p.add_argument("--inter-size-max", type=int, default=100, help="Max inter-demand PH size.")
