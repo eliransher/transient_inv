@@ -354,15 +354,31 @@ def _sample_unique_policies(
     min_S: int = 5,
     max_S: int = 30,
 ) -> list[tuple[int, int]]:
-    """Sample unique (s, S) pairs with min_S <= S <= max_S and 1 <= s <= S."""
+    """Sample (s, S) pairs with min_S <= S <= max_S and 1 <= s <= S.
+
+    - If n_policies <= number of feasible pairs, sampling is without replacement.
+    - If n_policies is larger, all feasible pairs are reused in shuffled rounds.
+    """
     candidates = [(s, S) for S in range(min_S, max_S + 1) for s in range(1, S + 1)]
-    if n_policies > len(candidates):
-        raise ValueError(
-            f"Requested {n_policies} unique policies, but only {len(candidates)} available "
-            f"under constraints {min_S}<=S<={max_S}, 1<=s<=S."
-        )
-    idx = rng.choice(len(candidates), size=n_policies, replace=False)
-    return [candidates[int(i)] for i in idx]
+    n_candidates = len(candidates)
+    if n_policies <= n_candidates:
+        idx = rng.choice(n_candidates, size=n_policies, replace=False)
+        return [candidates[int(i)] for i in idx]
+
+    # Overflow mode: keep randomness but allow repeats after all unique pairs are exhausted.
+    out: list[tuple[int, int]] = []
+    full_rounds = n_policies // n_candidates
+    remainder = n_policies % n_candidates
+
+    for _ in range(full_rounds):
+        perm = rng.permutation(n_candidates)
+        out.extend(candidates[int(i)] for i in perm)
+
+    if remainder > 0:
+        idx = rng.choice(n_candidates, size=remainder, replace=False)
+        out.extend(candidates[int(i)] for i in idx)
+
+    return out
 
 
 def designated_ph_generator(
@@ -1570,9 +1586,9 @@ def main():
     if args.n_settings > 1 and (args.s is not None or args.S is not None):
         raise ValueError("--n-settings>1 expects fully random (s,S); do not pass --s/--S.")
     if args.S is not None:
-        if not (5 <= args.S <= 30):
+        if not (8<= args.S <= 8):
             raise ValueError("--S must be in [5, 30].")
-        if not (1 <= args.s <= args.S):
+        if not (4 <= args.s <= 4):
             raise ValueError("--s must be in [1, S].")
     if (args.model_num is not None) and (not (1 <= args.model_num <= 1_000_000)):
         raise ValueError("--model-num must be in [1, 1000000].")
