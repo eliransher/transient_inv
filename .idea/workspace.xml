@@ -4,7 +4,13 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="f9c82d18-51bb-43bd-9029-c62e837b0aad" name="Changes" comment="initail comit" />
+    <list default="true" id="f9c82d18-51bb-43bd-9029-c62e837b0aad" name="Changes" comment="initail comit">
+      <change afterPath="$PROJECT_DIR$/trans_sim_rgb.pbs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code/inventory_accuracy_trials.py" beforeDir="false" afterPath="$PROJECT_DIR$/code/inventory_accuracy_trials.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code/inventory_simpy_ph.py" beforeDir="false" afterPath="$PROJECT_DIR$/code/inventory_simpy_ph.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code/sim_inv_trans.sh" beforeDir="false" afterPath="$PROJECT_DIR$/code/sim_inv_trans.sh" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -34,18 +40,18 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Python.inventory_accuracy_trials.executor&quot;: &quot;Run&quot;,
-    &quot;Python.inventory_simpy_ph (1).executor&quot;: &quot;Run&quot;,
-    &quot;Python.inventory_simpy_ph.executor&quot;: &quot;Run&quot;,
-    &quot;Python.ph_summary_table.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/Eshel/workspace/Elad_miklat&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.inventory_accuracy_trials.executor": "Run",
+    "Python.inventory_simpy_ph (1).executor": "Run",
+    "Python.inventory_simpy_ph.executor": "Run",
+    "Python.ph_summary_table.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "main",
+    "last_opened_file_path": "C:/Users/Eshel/workspace/non_renewal_queueing_system",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
   <component name="RunManager" selected="Python.inventory_simpy_ph">
     <configuration name="inventory_accuracy_trials" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="Elad_miklat" />
@@ -261,7 +267,15 @@
       <option name="project" value="LOCAL" />
       <updated>1779283911868</updated>
     </task>
-    <option name="localTasksCounter" value="13" />
+    <task id="LOCAL-00013" summary="initail comit">
+      <option name="closed" value="true" />
+      <created>1779284455020</created>
+      <option name="number" value="00013" />
+      <option name="presentableId" value="LOCAL-00013" />
+      <option name="project" value="LOCAL" />
+      <updated>1779284455020</updated>
+    </task>
+    <option name="localTasksCounter" value="14" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">

@@ -21,6 +21,9 @@ import sys
 import numpy as np
 import pandas as pd
 
+FIXED_S = 4
+FIXED_CAP_S = 8
+
 try:
     from inventory_simpy_ph import designated_ph_generator, simulate_given_setting
 except ModuleNotFoundError:
@@ -59,19 +62,12 @@ def _sample_setting(
     if inter_size_max < 1 or lead_size_max < 1:
         raise ValueError("inter_size_max and lead_size_max must be >= 1.")
 
-    if (s is None) ^ (S is None):
-        raise ValueError("Provide both s and S together, or neither.")
-
-    if S is None:
-        S_val = int(rng.integers(5, 31))
-        s_val = int(rng.integers(1, S_val + 1))
-    else:
-        if not (5 <= S <= 30):
-            raise ValueError("S must be in [5, 30].")
-        if not (1 <= s <= S):
-            raise ValueError("s must satisfy 1 <= s <= S.")
-        S_val = int(S)
-        s_val = int(s)
+    s_in = FIXED_S if s is None else int(s)
+    S_in = FIXED_CAP_S if S is None else int(S)
+    if s_in != FIXED_S or S_in != FIXED_CAP_S:
+        raise ValueError(f"This script is fixed to s={FIXED_S} and S={FIXED_CAP_S}.")
+    s_val = FIXED_S
+    S_val = FIXED_CAP_S
 
     inter_size = int(rng.integers(1, inter_size_max + 1))
     lead_size = int(rng.integers(1, lead_size_max + 1))
@@ -202,8 +198,8 @@ def _parse_args():
     p.add_argument("--seed", type=int, default=None, help="Optional top-level seed.")
     p.add_argument("--inter-size-max", type=int, default=100, help="Max inter-demand PH size.")
     p.add_argument("--lead-size-max", type=int, default=100, help="Max lead-time PH size.")
-    p.add_argument("--s", type=int, default=None, help="Optional fixed s (must provide S too).")
-    p.add_argument("--S", type=int, default=None, help="Optional fixed S in [5,30].")
+    p.add_argument("--s", type=int, default=FIXED_S, help=f"Fixed s (must be {FIXED_S}).")
+    p.add_argument("--S", type=int, default=FIXED_CAP_S, help=f"Fixed S (must be {FIXED_CAP_S}).")
     p.add_argument(
         "--dump-dir",
         "--output-dir",

@@ -21,6 +21,9 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 import simpy
 
+FIXED_S = 4
+FIXED_CAP_S = 8
+
 
 @dataclass(frozen=True)
 class PHDistribution:
@@ -1521,8 +1524,8 @@ def _parse_args():
         help="Output path for simulation-vs-analytic comparison figure.",
     )
     parser.add_argument("--show", action="store_true", help="Show the graph window.")
-    parser.add_argument("--s", type=int, default=None, help="Optional fixed reorder point.")
-    parser.add_argument("--S", type=int, default=None, help="Optional fixed order-up-to level.")
+    parser.add_argument("--s", type=int, default=FIXED_S, help=f"Fixed reorder point (must be {FIXED_S}).")
+    parser.add_argument("--S", type=int, default=FIXED_CAP_S, help=f"Fixed order-up-to level (must be {FIXED_CAP_S}).")
     parser.add_argument("--model-number", type=int, default=0, help="Model number token used in file names.")
     parser.add_argument(
         "--model-num",
@@ -1581,15 +1584,8 @@ def main():
         raise ValueError("--n-settings must be >= 1.")
     if args.level < 0 or args.level > 30:
         raise ValueError("level must be between 0 and 30.")
-    if (args.s is None) ^ (args.S is None):
-        raise ValueError("Provide both --s and --S together, or neither.")
-    if args.n_settings > 1 and (args.s is not None or args.S is not None):
-        raise ValueError("--n-settings>1 expects fully random (s,S); do not pass --s/--S.")
-    if args.S is not None:
-        if not (8<= args.S <= 8):
-            raise ValueError("--S must be in [5, 30].")
-        if not (4 <= args.s <= 4):
-            raise ValueError("--s must be in [1, S].")
+    if int(args.s) != FIXED_S or int(args.S) != FIXED_CAP_S:
+        raise ValueError(f"This script is fixed to s={FIXED_S} and S={FIXED_CAP_S}.")
     if (args.model_num is not None) and (not (1 <= args.model_num <= 1_000_000)):
         raise ValueError("--model-num must be in [1, 1000000].")
     if args.n_settings > 1 and args.model_num is not None:
@@ -1611,9 +1607,9 @@ def main():
     print(f"pickle dirs -> inv: {inv_dir} | order: {order_dir} | loss: {loss_dir}")
 
     if args.n_settings > 1:
-        unique_policies = _sample_unique_policies(args.n_settings, rng)
         saved_triplets: list[tuple[Path, Path, Path]] = []
-        for idx, (s, S) in enumerate(unique_policies):
+        for idx in range(args.n_settings):
+            s, S = FIXED_S, FIXED_CAP_S
             rep_seed = None if args.seed is None else int(rng.integers(0, 2**31 - 1))
             mode_name = "baseline-ph"
 
@@ -1703,8 +1699,8 @@ def main():
         return
 
     if args.exp_varying_compare:
-        s_fixed = args.s if args.s is not None else 5
-        S_fixed = args.S if args.S is not None else 15
+        s_fixed = FIXED_S
+        S_fixed = FIXED_CAP_S
         print(
             "exponential varying-rate comparison mode: lead_rate=1, "
             f"random demand-rate changes over time, s={s_fixed}, S={S_fixed}"
@@ -1766,8 +1762,8 @@ def main():
         return
 
     if args.exp_compare:
-        s_fixed = args.s if args.s is not None else 5
-        S_fixed = args.S if args.S is not None else 10
+        s_fixed = FIXED_S
+        S_fixed = FIXED_CAP_S
         print(f"exponential comparison mode: demand_rate=1, lead_rate=1, s={s_fixed}, S={S_fixed}")
 
         x, sim_inv, orders, lost, analytic_inv = simulate_exponential_with_analytic(
@@ -1823,8 +1819,8 @@ def main():
         return
 
     if args.dynamic_demand:
-        s_fixed = args.s if args.s is not None else 5
-        S_fixed = args.S if args.S is not None else 15
+        s_fixed = FIXED_S
+        S_fixed = FIXED_CAP_S
         print(
             "dynamic-demand mode: lead-time mean fixed at 1; "
             f"random demand changes (2..10 points, min-gap=5), s={s_fixed}, S={S_fixed}"
