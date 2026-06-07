@@ -4,7 +4,7 @@
 #SBATCH --error=job2.err
 #SBATCH --partition=cpu
 #SBATCH --ntasks=64
-#SBATCH --time=02:00:00
+#SBATCH --time=24:00:00
 
 module load gcc openmpi hdf5/serial python/3
 source /home/elirans/project/queues/bin/activate
