@@ -5,8 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f9c82d18-51bb-43bd-9029-c62e837b0aad" name="Changes" comment="initail comit">
-      <change afterPath="$PROJECT_DIR$/code/run_sim_hpc_ariel.pbs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/code/run_sim_slurm.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code/run_sim_hpc_ariel.pbs" beforeDir="false" afterPath="$PROJECT_DIR$/code/run_sim_hpc_ariel.pbs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -272,7 +272,15 @@
       <option name="project" value="LOCAL" />
       <updated>1779284455020</updated>
     </task>
-    <option name="localTasksCounter" value="14" />
+    <task id="LOCAL-00014" summary="initail comit">
+      <option name="closed" value="true" />
+      <created>1780827315373</created>
+      <option name="number" value="00014" />
+      <option name="presentableId" value="LOCAL-00014" />
+      <option name="project" value="LOCAL" />
+      <updated>1780827315373</updated>
+    </task>
+    <option name="localTasksCounter" value="15" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
