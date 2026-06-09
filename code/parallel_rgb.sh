@@ -2,7 +2,7 @@
 #SBATCH --job-name=job2
 #SBATCH --output=job2.out
 #SBATCH --error=job2.err
-#SBATCH --partition=cpu_fat
+#SBATCH --partition=cpu-fat
 #SBATCH --ntasks=64
 #SBATCH --time=48:00:00
 
