@@ -1,7 +1,7 @@
 #!/bin/sh
 #SBATCH --job-name=job2
-#SBATCH --output=job2.out
-#SBATCH --error=job2.err
+#SBATCH --output=job3.out
+#SBATCH --error=job3.err
 #SBATCH --partition=cpu-fat
 #SBATCH --ntasks=64
 #SBATCH --time=48:00:00
