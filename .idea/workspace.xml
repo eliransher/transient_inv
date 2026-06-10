@@ -37,18 +37,18 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python.inventory_accuracy_trials.executor": "Run",
-    "Python.inventory_simpy_ph (1).executor": "Run",
-    "Python.inventory_simpy_ph.executor": "Run",
-    "Python.ph_summary_table.executor": "Run",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "main",
-    "last_opened_file_path": "C:/Users/Eshel/workspace/non_renewal_queueing_system",
-    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python.inventory_accuracy_trials.executor&quot;: &quot;Run&quot;,
+    &quot;Python.inventory_simpy_ph (1).executor&quot;: &quot;Run&quot;,
+    &quot;Python.inventory_simpy_ph.executor&quot;: &quot;Run&quot;,
+    &quot;Python.ph_summary_table.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/Eshel/workspace/non_renewal_queueing_system&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager" selected="Python.inventory_simpy_ph">
     <configuration name="inventory_accuracy_trials" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="Elad_miklat" />

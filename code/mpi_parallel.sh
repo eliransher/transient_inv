@@ -1,10 +1,10 @@
 #!/bin/sh
 #SBATCH --job-name=job2
-#SBATCH --output=job2.out
-#SBATCH --error=job2.err
+#SBATCH --output=job4.out
+#SBATCH --error=job4.err
 #SBATCH --partition=cpu
 #SBATCH --ntasks=64
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 
 module load gcc openmpi hdf5/serial python/3
 source /home/elirans/project/queues/bin/activate
