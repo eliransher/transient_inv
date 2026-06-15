@@ -1922,8 +1922,11 @@ def _print_control_summary(control_ranges: Optional[InputControlRanges]) -> None
 
 
 def _run_partition_sampled_simulations(args, inv_dir: Path, order_dir: Path, loss_dir: Path) -> None:
+    partition_csv_path = Path(args.partition_counts_csv)
+    if not partition_csv_path.is_absolute():
+        partition_csv_path = Path(__file__).resolve().parent / partition_csv_path
     partitions = _load_input_partitions(
-        csv_path=Path(args.partition_counts_csv),
+        csv_path=partition_csv_path,
         max_num_files=int(args.partition_count_threshold),
     )
     rng = np.random.default_rng(args.seed)
