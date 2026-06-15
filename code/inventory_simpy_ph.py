@@ -12,6 +12,7 @@ which returns:
 from __future__ import annotations
 
 import argparse
+import csv
 import pickle
 from dataclasses import dataclass
 from math import factorial
@@ -56,6 +57,31 @@ class DynamicDemandPlan:
     change_points: np.ndarray  # shape (k,), values in {1,...,horizon}
     means: np.ndarray  # shape (k+1,), segment means including initial segment
     phs: Tuple[PHDistribution, ...]  # length k+1
+
+
+@dataclass(frozen=True)
+class InputControlRanges:
+    """Optional ranges for controlled random setting generation."""
+
+    inter_avg_scv: Optional[Tuple[float, float]] = None
+    lead_scv: Optional[Tuple[float, float]] = None
+    mean_ratio: Optional[Tuple[float, float]] = None
+    s: Optional[Tuple[int, int]] = None
+    S: Optional[Tuple[int, int]] = None
+    max_tries: int = 1000
+
+
+@dataclass(frozen=True)
+class InputPartition:
+    """One CSV-defined coarse input partition."""
+
+    test_set: int
+    D: str
+    L: str
+    rho: str
+    S: str
+    s: str
+    num_files: int
 
 
 def _compute_ph_moments(alpha: np.ndarray, T: np.ndarray, k_max: int = 10) -> np.ndarray:
@@ -288,11 +314,187 @@ def _scv_from_moments(moments: np.ndarray) -> float:
     return var / (m1 * m1)
 
 
+def _validate_float_range(name: str, value_range: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    if value_range is None:
+        return None
+    low, high = float(value_range[0]), float(value_range[1])
+    if low < 0 or high < low:
+        raise ValueError(f"{name} must satisfy 0 <= min <= max.")
+    return low, high
+
+
+def _validate_int_range(
+    name: str,
+    value_range: Optional[Tuple[int, int]],
+    min_allowed: int,
+    max_allowed: int,
+) -> Optional[Tuple[int, int]]:
+    if value_range is None:
+        return None
+    low, high = int(value_range[0]), int(value_range[1])
+    if low < min_allowed or high > max_allowed or high < low:
+        raise ValueError(f"{name} must satisfy {min_allowed} <= min <= max <= {max_allowed}.")
+    return low, high
+
+
+def _in_float_range(value: float, value_range: Optional[Tuple[float, float]]) -> bool:
+    if value_range is None:
+        return True
+    low, high = value_range
+    return low <= float(value) <= high
+
+
+def _sample_policy_in_ranges(
+    rng: np.random.Generator,
+    s_range: Optional[Tuple[int, int]],
+    S_range: Optional[Tuple[int, int]],
+) -> Tuple[int, int]:
+    s_low, s_high = s_range if s_range is not None else (FIXED_S, FIXED_S)
+    S_low, S_high = S_range if S_range is not None else (FIXED_CAP_S, FIXED_CAP_S)
+    candidates = [
+        (s, S)
+        for S in range(int(S_low), int(S_high) + 1)
+        for s in range(int(s_low), int(s_high) + 1)
+        if 0 <= s < S <= 30
+    ]
+    if not candidates:
+        raise ValueError("No feasible (s, S) policy exists for the requested ranges with 0 <= s < S <= 30.")
+    return candidates[int(rng.integers(0, len(candidates)))]
+
+
+def _dynamic_segment_lengths(horizon: int, change_points: Sequence[int]) -> np.ndarray:
+    counts = np.zeros(len(change_points) + 1, dtype=float)
+    cps = np.array(change_points, dtype=int)
+    seg_idx = 0
+    for t in range(1, horizon + 1):
+        while seg_idx < cps.size and t >= cps[seg_idx]:
+            seg_idx += 1
+        counts[seg_idx] += 1.0
+    return counts
+
+
+def dynamic_plan_average_mean(plan: DynamicDemandPlan, horizon: int) -> float:
+    weights = _dynamic_segment_lengths(horizon, plan.change_points)
+    return float(np.average(np.array(plan.means, dtype=float), weights=weights))
+
+
+def dynamic_plan_average_scv(plan: DynamicDemandPlan, horizon: int) -> float:
+    weights = _dynamic_segment_lengths(horizon, plan.change_points)
+    scvs = np.array([_scv_from_moments(ph.moments) for ph in plan.phs], dtype=float)
+    return float(np.average(scvs, weights=weights))
+
+
+def _generate_ph_with_size_sampling(
+    max_size: int,
+    target_mean: float,
+    rng: np.random.Generator,
+    scv_range: Optional[Tuple[float, float]],
+    max_tries: int,
+) -> PHDistribution:
+    scv_range = _validate_float_range("scv_range", scv_range)
+    min_scv, max_scv = scv_range if scv_range is not None else (0.0, 20.0)
+    last_error: Optional[Exception] = None
+    for _ in range(max_tries):
+        try:
+            size = _sample_ph_size(max_size, rng)
+            return designated_ph_generator(
+                size=size,
+                target_mean=target_mean,
+                rng=rng,
+                min_scv=min_scv,
+                max_scv=max_scv,
+                max_tries=max(200, max_tries),
+            )
+        except RuntimeError as exc:
+            last_error = exc
+    detail = f" Last generator error: {last_error}" if last_error is not None else ""
+    raise RuntimeError(f"Could not generate PH with sampled size in SCV range {scv_range}.{detail}")
+
+
+def _load_input_partitions(csv_path: Path, max_num_files: int) -> list[InputPartition]:
+    if max_num_files < 0:
+        raise ValueError("max_num_files must be non-negative.")
+    partitions: list[InputPartition] = []
+    with csv_path.open("r", newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        required = {"Test Set", "D", "L", "rho", "S", "s", "num_files"}
+        missing = required.difference(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"Partition CSV is missing required columns: {sorted(missing)}")
+        for row in reader:
+            num_files = int(row["num_files"])
+            if num_files < max_num_files:
+                partitions.append(
+                    InputPartition(
+                        test_set=int(row["Test Set"]),
+                        D=str(row["D"]).strip(),
+                        L=str(row["L"]).strip(),
+                        rho=str(row["rho"]).strip(),
+                        S=str(row["S"]).strip(),
+                        s=str(row["s"]).strip().lower(),
+                        num_files=num_files,
+                    )
+                )
+    if not partitions:
+        raise ValueError(f"No partition rows have num_files < {max_num_files}.")
+    return partitions
+
+
+def _range_from_threshold_label(
+    label: str,
+    threshold: float,
+    low_value: float,
+    high_value: float,
+) -> Tuple[float, float]:
+    normalized = str(label).replace(" ", "")
+    eps = 1e-9
+    if normalized == f"<={threshold:g}":
+        return low_value, threshold
+    if normalized == f">{threshold:g}":
+        return threshold + eps, high_value
+    raise ValueError(f"Unsupported threshold label: {label!r}")
+
+
+def _S_range_from_partition(label: str) -> Tuple[int, int]:
+    normalized = str(label).replace(" ", "")
+    if normalized == "<=15":
+        return 1, 15
+    if normalized == ">15":
+        return 16, 30
+    raise ValueError(f"Unsupported S partition label: {label!r}")
+
+
+def _sample_policy_from_partition(partition: InputPartition, rng: np.random.Generator) -> Tuple[int, int]:
+    S_low, S_high = _S_range_from_partition(partition.S)
+    candidates: list[tuple[int, int]] = []
+    for S in range(S_low, S_high + 1):
+        midpoint = S / 2.0
+        if partition.s == "small":
+            candidates.extend((s, S) for s in range(0, S) if s <= midpoint)
+        elif partition.s == "large":
+            candidates.extend((s, S) for s in range(0, S) if s > midpoint)
+        else:
+            raise ValueError(f"Unsupported s partition label: {partition.s!r}")
+    if not candidates:
+        raise ValueError(f"No feasible s/S policy for partition test set {partition.test_set}.")
+    return candidates[int(rng.integers(0, len(candidates)))]
+
+
+def _control_ranges_from_partition(partition: InputPartition, max_tries: int) -> InputControlRanges:
+    return InputControlRanges(
+        inter_avg_scv=_range_from_threshold_label(partition.D, threshold=5.0, low_value=0.0, high_value=20.0),
+        lead_scv=_range_from_threshold_label(partition.L, threshold=5.0, low_value=0.0, high_value=20.0),
+        mean_ratio=_range_from_threshold_label(partition.rho, threshold=1.0, low_value=0.1, high_value=10.0),
+        max_tries=max_tries,
+    )
+
+
 def generate_random_ph_wide(
     size: int,
     target_mean: float,
     rng: np.random.Generator,
     max_tries: int = 200,
+    min_scv: float = 0.0,
     max_scv: float = 20.0,
 ) -> PHDistribution:
     """Wide PH generator aligned with ph_summary_table.py family mix."""
@@ -300,8 +502,8 @@ def generate_random_ph_wide(
         raise ValueError("size must be positive.")
     if target_mean <= 0:
         raise ValueError("target_mean must be positive.")
-    if max_scv <= 0:
-        raise ValueError("max_scv must be positive.")
+    if min_scv < 0 or max_scv < min_scv:
+        raise ValueError("Need 0 <= min_scv <= max_scv.")
 
     families = ("base", "erlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
     probs = np.array([0.20, 0.14, 0.18, 0.16, 0.16, 0.16], dtype=float)
@@ -329,6 +531,7 @@ def generate_random_ph_wide(
                 and np.all(moments > 0)
                 and np.max(moments) < 1e300
                 and np.isfinite(scv)
+                and scv >= min_scv
                 and scv <= max_scv
             ):
                 return ph
@@ -338,10 +541,14 @@ def generate_random_ph_wide(
             continue
 
     fallback = generate_random_ph(size=size, target_mean=target_mean, rng=rng)
-    if _scv_from_moments(fallback.moments) <= max_scv:
+    fallback_scv = _scv_from_moments(fallback.moments)
+    if min_scv <= fallback_scv <= max_scv:
         return fallback
-    # Guaranteed low-SCV fallback.
-    return _gen_erlang_like_ph(size=size, target_mean=target_mean)
+    erlang = _gen_erlang_like_ph(size=size, target_mean=target_mean)
+    erlang_scv = _scv_from_moments(erlang.moments)
+    if min_scv <= erlang_scv <= max_scv:
+        return erlang
+    raise RuntimeError(f"Could not generate PH with SCV in [{min_scv}, {max_scv}] after {max_tries} tries.")
 
 
 def _sample_ph_size(max_size: int, rng: np.random.Generator) -> int:
@@ -388,10 +595,19 @@ def designated_ph_generator(
     size: int,
     rng: np.random.Generator,
     target_mean: float = 1.0,
+    min_scv: float = 0.0,
     max_scv: float = 20.0,
+    max_tries: int = 200,
 ) -> PHDistribution:
     """Designated PH-generation function (size-driven API)."""
-    return generate_random_ph_wide(size=size, target_mean=target_mean, rng=rng, max_scv=max_scv)
+    return generate_random_ph_wide(
+        size=size,
+        target_mean=target_mean,
+        rng=rng,
+        max_tries=max_tries,
+        min_scv=min_scv,
+        max_scv=max_scv,
+    )
 
 
 def exponential_ph(rate: float = 1.0) -> PHDistribution:
@@ -439,36 +655,68 @@ def generate_dynamic_demand_plan(
     min_changes: int = 2,
     max_changes: int = 10,
     min_gap: int = 5,
+    avg_scv_range: Optional[Tuple[float, float]] = None,
+    avg_mean_range: Optional[Tuple[float, float]] = None,
+    max_plan_tries: int = 1000,
 ) -> DynamicDemandPlan:
-    """Generate dynamic inter-demand PHs and random means in (0.1, 10)."""
+    """Generate dynamic inter-demand PHs with optional weighted-average controls."""
     if min_changes < 1 or max_changes < min_changes:
         raise ValueError("Need 1 <= min_changes <= max_changes.")
+    max_feasible = (horizon - 1) // min_gap + 1
+    max_changes = min(max_changes, max_feasible)
+    if min_changes > max_changes:
+        raise ValueError("Requested min_changes/min_gap is infeasible for this horizon.")
+    avg_scv_range = _validate_float_range("avg_scv_range", avg_scv_range)
+    avg_mean_range = _validate_float_range("avg_mean_range", avg_mean_range)
+    if max_plan_tries < 1:
+        raise ValueError("max_plan_tries must be >= 1.")
 
-    n_changes = int(rng.integers(min_changes, max_changes + 1))
-    change_points = sample_change_points_with_min_gap(
-        horizon=horizon,
-        n_changes=n_changes,
-        min_gap=min_gap,
-        rng=rng,
-    )
+    mean_low, mean_high = avg_mean_range if avg_mean_range is not None else (0.1, 10.0)
+    if mean_low <= 0:
+        raise ValueError("Average inter-demand mean range must be positive.")
+    ph_min_scv = 0.0
+    ph_max_scv = max(20.0, avg_scv_range[1] if avg_scv_range is not None else 20.0)
 
-    means = np.zeros(n_changes + 1, dtype=float)
-    phs = []
-    prev_mean = None
-    for seg in range(n_changes + 1):
-        m = float(rng.uniform(0.1, 10.0))
-        while (prev_mean is not None) and (abs(m - prev_mean) < 1e-9):
-            m = float(rng.uniform(0.1, 10.0))
-        means[seg] = m
-        seg_size = _sample_ph_size(inter_size, rng)
-        phs.append(designated_ph_generator(size=seg_size, target_mean=m, rng=rng))
-        prev_mean = m
+    for _ in range(max_plan_tries):
+        n_changes = int(rng.integers(min_changes, max_changes + 1))
+        change_points = sample_change_points_with_min_gap(
+            horizon=horizon,
+            n_changes=n_changes,
+            min_gap=min_gap,
+            rng=rng,
+        )
 
-    return DynamicDemandPlan(
-        change_points=change_points,
-        means=means,
-        phs=tuple(phs),
-    )
+        means = np.zeros(n_changes + 1, dtype=float)
+        phs = []
+        prev_mean = None
+        for seg in range(n_changes + 1):
+            m = float(rng.uniform(mean_low, mean_high))
+            while (mean_high > mean_low) and (prev_mean is not None) and (abs(m - prev_mean) < 1e-9):
+                m = float(rng.uniform(mean_low, mean_high))
+            means[seg] = m
+            phs.append(
+                _generate_ph_with_size_sampling(
+                    max_size=inter_size,
+                    target_mean=m,
+                    rng=rng,
+                    scv_range=(ph_min_scv, ph_max_scv),
+                    max_tries=max_plan_tries,
+                )
+            )
+            prev_mean = m
+
+        plan = DynamicDemandPlan(
+            change_points=change_points,
+            means=means,
+            phs=tuple(phs),
+        )
+        if _in_float_range(dynamic_plan_average_mean(plan, horizon), avg_mean_range) and _in_float_range(
+            dynamic_plan_average_scv(plan, horizon),
+            avg_scv_range,
+        ):
+            return plan
+
+    raise RuntimeError("Could not generate dynamic demand plan inside requested average mean/SCV ranges.")
 
 
 def generate_dynamic_exponential_demand_plan(
@@ -481,6 +729,10 @@ def generate_dynamic_exponential_demand_plan(
     """Generate piecewise-exponential inter-demand plan with random means in (0.1, 10)."""
     if min_changes < 1 or max_changes < min_changes:
         raise ValueError("Need 1 <= min_changes <= max_changes.")
+    max_feasible = (horizon - 1) // min_gap + 1
+    max_changes = min(max_changes, max_feasible)
+    if min_changes > max_changes:
+        raise ValueError("Requested min_changes/min_gap is infeasible for this horizon.")
 
     n_changes = int(rng.integers(min_changes, max_changes + 1))
     change_points = sample_change_points_with_min_gap(
@@ -750,11 +1002,21 @@ def simulate_dynamic_demand_setting(
     n_replications: int = 50000,
     horizon: int = 100,
     seed: Optional[int] = None,
+    control_ranges: Optional[InputControlRanges] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, DynamicDemandPlan]:
     """Simulate with dynamic inter-demand PH and fixed lead-time mean=1."""
     rng = np.random.default_rng(seed)
-    lead_size_sample = _sample_ph_size(lead_size, rng)
-    lead_time_ph = designated_ph_generator(size=lead_size_sample, target_mean=1.0, rng=rng)
+    control_ranges = control_ranges or InputControlRanges()
+    lead_scv_range = _validate_float_range("lead_scv", control_ranges.lead_scv)
+    inter_avg_scv_range = _validate_float_range("inter_avg_scv", control_ranges.inter_avg_scv)
+    mean_ratio_range = _validate_float_range("mean_ratio", control_ranges.mean_ratio)
+    lead_time_ph = _generate_ph_with_size_sampling(
+        max_size=lead_size,
+        target_mean=1.0,
+        rng=rng,
+        scv_range=lead_scv_range,
+        max_tries=control_ranges.max_tries,
+    )
     demand_plan = generate_dynamic_demand_plan(
         inter_size=inter_size,
         horizon=horizon,
@@ -762,6 +1024,9 @@ def simulate_dynamic_demand_setting(
         min_changes=2,
         max_changes=10,
         min_gap=5,
+        avg_scv_range=inter_avg_scv_range,
+        avg_mean_range=mean_ratio_range,
+        max_plan_tries=control_ranges.max_tries,
     )
     inv_dist, avg_orders, avg_lost, sample_plan = aggregate_replications_dynamic_demand(
         inter_size=inter_size,
@@ -784,6 +1049,52 @@ def simulate_dynamic_demand_setting(
         demand_plan=sample_plan,
     )
     return input_vector, inv_dist, avg_orders, avg_lost, sample_plan
+
+
+def generate_controlled_setting(
+    inter_size: int,
+    lead_size: int,
+    rng: np.random.Generator,
+    control_ranges: Optional[InputControlRanges] = None,
+) -> Tuple[np.ndarray, PHDistribution, PHDistribution, int, int]:
+    """Generate one static setting while enforcing optional control ranges."""
+    control_ranges = control_ranges or InputControlRanges()
+    inter_avg_scv_range = _validate_float_range("inter_avg_scv", control_ranges.inter_avg_scv)
+    lead_scv_range = _validate_float_range("lead_scv", control_ranges.lead_scv)
+    mean_ratio_range = _validate_float_range("mean_ratio", control_ranges.mean_ratio)
+    s_range = _validate_int_range("s", control_ranges.s, 0, 29)
+    S_range = _validate_int_range("S", control_ranges.S, 1, 30)
+    if control_ranges.max_tries < 1:
+        raise ValueError("max_tries must be >= 1.")
+
+    mean_low, mean_high = mean_ratio_range if mean_ratio_range is not None else (1.0, 1.0)
+
+    last_error: Optional[Exception] = None
+    for _ in range(control_ranges.max_tries):
+        try:
+            inter_mean = float(rng.uniform(mean_low, mean_high))
+            inter_demand_ph = _generate_ph_with_size_sampling(
+                max_size=inter_size,
+                target_mean=inter_mean,
+                rng=rng,
+                scv_range=inter_avg_scv_range,
+                max_tries=control_ranges.max_tries,
+            )
+            lead_time_ph = _generate_ph_with_size_sampling(
+                max_size=lead_size,
+                target_mean=1.0,
+                rng=rng,
+                scv_range=lead_scv_range,
+                max_tries=control_ranges.max_tries,
+            )
+            s, S = _sample_policy_in_ranges(rng, s_range, S_range)
+            input_vector = build_input_vector(inter_demand_ph, lead_time_ph, s=s, S=S)
+            return input_vector, inter_demand_ph, lead_time_ph, s, S
+        except RuntimeError as exc:
+            last_error = exc
+
+    detail = f" Last generator error: {last_error}" if last_error is not None else ""
+    raise RuntimeError(f"Could not generate controlled setting after {control_ranges.max_tries} tries.{detail}")
 
 
 def generate_random_setting(
@@ -874,6 +1185,21 @@ def lead_scv_from_input_vector(x: np.ndarray) -> float:
         raise ValueError("Lead-time first moment must be positive.")
     var = max(0.0, m2 - m1 * m1)
     return var / (m1 * m1)
+
+
+def average_inter_mean_from_input_vector(x: np.ndarray) -> float:
+    """Return the time-average inter-demand mean from log-moment input rows."""
+    rows = x[None, :] if x.ndim == 1 else x
+    return float(np.mean(np.exp(rows[:, 0])))
+
+
+def average_inter_scv_from_input_vector(x: np.ndarray) -> float:
+    """Return the time-average inter-demand SCV from log-moment input rows."""
+    rows = x[None, :] if x.ndim == 1 else x
+    m1 = np.exp(rows[:, 0])
+    m2 = np.exp(rows[:, 1])
+    var = np.maximum(0.0, m2 - m1 * m1)
+    return float(np.mean(var / np.maximum(m1 * m1, 1e-300)))
 
 
 def _format_float_for_filename(value: float) -> str:
@@ -997,6 +1323,7 @@ def simulate_multiple_settings(
     n_replications: int = 50000,
     horizon: int = 100,
     seed: Optional[int] = None,
+    control_ranges: Optional[InputControlRanges] = None,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate a dataset across multiple random settings.
 
@@ -1014,16 +1341,24 @@ def simulate_multiple_settings(
     Y_orders = np.zeros((n_settings, horizon), dtype=float)
     Y_lost = np.zeros((n_settings, horizon), dtype=float)
     policy_rng = np.random.default_rng(seed)
-    unique_policies = _sample_unique_policies(n_settings, policy_rng)
+    unique_policies = None if control_ranges is not None else _sample_unique_policies(n_settings, policy_rng)
 
     for idx, ss in enumerate(setting_seeds):
         rng = np.random.default_rng(ss)
-        inter_size_sample = _sample_ph_size(inter_size, rng)
-        inter_demand_ph = designated_ph_generator(size=inter_size_sample, target_mean=1.0, rng=rng)
-        lead_mean = float(rng.uniform(0.1, 10.0))
-        lead_size_sample = _sample_ph_size(lead_size, rng)
-        lead_time_ph = designated_ph_generator(size=lead_size_sample, target_mean=lead_mean, rng=rng)
-        s, S = unique_policies[idx]
+        if control_ranges is None:
+            inter_size_sample = _sample_ph_size(inter_size, rng)
+            inter_demand_ph = designated_ph_generator(size=inter_size_sample, target_mean=1.0, rng=rng)
+            lead_mean = float(rng.uniform(0.1, 10.0))
+            lead_size_sample = _sample_ph_size(lead_size, rng)
+            lead_time_ph = designated_ph_generator(size=lead_size_sample, target_mean=lead_mean, rng=rng)
+            s, S = unique_policies[idx]
+        else:
+            _, inter_demand_ph, lead_time_ph, s, S = generate_controlled_setting(
+                inter_size=inter_size,
+                lead_size=lead_size,
+                rng=rng,
+                control_ranges=control_ranges,
+            )
         input_vector = build_time_epoch_input_matrix(
             horizon=horizon,
             lead_time_ph=lead_time_ph,
@@ -1497,6 +1832,207 @@ def plot_inventory_probabilities_0_to_S_with_changes(
     return fig, ax
 
 
+def _optional_float_range(name: str, low: Optional[float], high: Optional[float]) -> Optional[Tuple[float, float]]:
+    if low is None and high is None:
+        return None
+    if low is None or high is None:
+        raise ValueError(f"Provide both --{name}-min and --{name}-max.")
+    return _validate_float_range(name, (float(low), float(high)))
+
+
+def _optional_int_range(
+    name: str,
+    low: Optional[int],
+    high: Optional[int],
+    min_allowed: int,
+    max_allowed: int,
+) -> Optional[Tuple[int, int]]:
+    if low is None and high is None:
+        return None
+    if low is None or high is None:
+        raise ValueError(f"Provide both --{name}-min and --{name}-max.")
+    return _validate_int_range(name, (int(low), int(high)), min_allowed, max_allowed)
+
+
+def _build_control_ranges(args) -> Optional[InputControlRanges]:
+    inter_avg_scv = _optional_float_range("inter-avg-scv", args.inter_avg_scv_min, args.inter_avg_scv_max)
+    lead_scv = _optional_float_range("lead-scv", args.lead_scv_min, args.lead_scv_max)
+    mean_ratio = _optional_float_range("mean-ratio", args.mean_ratio_min, args.mean_ratio_max)
+    s_range = _optional_int_range("s", args.s_min, args.s_max, 0, 29)
+    S_range = _optional_int_range("S", args.S_min, args.S_max, 1, 30)
+    exact_s = None if args.s is None else int(args.s)
+    exact_S = None if args.S is None else int(args.S)
+
+    if s_range is not None and exact_s is not None:
+        raise ValueError("Use either --s or --s-min/--s-max, not both.")
+    if S_range is not None and exact_S is not None:
+        raise ValueError("Use either --S or --S-min/--S-max, not both.")
+    if s_range is None:
+        s_range = (FIXED_S if exact_s is None else exact_s, FIXED_S if exact_s is None else exact_s)
+    if S_range is None:
+        S_range = (FIXED_CAP_S if exact_S is None else exact_S, FIXED_CAP_S if exact_S is None else exact_S)
+    _validate_int_range("s", s_range, 0, 29)
+    _validate_int_range("S", S_range, 1, 30)
+
+    controls_requested = any(
+        value is not None
+        for value in (
+            inter_avg_scv,
+            lead_scv,
+            mean_ratio,
+            args.s_min,
+            args.s_max,
+            args.S_min,
+            args.S_max,
+            args.s,
+            args.S,
+        )
+    )
+    if not controls_requested:
+        return None
+
+    return InputControlRanges(
+        inter_avg_scv=inter_avg_scv,
+        lead_scv=lead_scv,
+        mean_ratio=mean_ratio,
+        s=s_range,
+        S=S_range,
+        max_tries=int(args.control_max_tries),
+    )
+
+
+def _sample_cli_policy(rng: np.random.Generator, control_ranges: Optional[InputControlRanges]) -> Tuple[int, int]:
+    if control_ranges is None:
+        return FIXED_S, FIXED_CAP_S
+    return _sample_policy_in_ranges(rng, control_ranges.s, control_ranges.S)
+
+
+def _print_control_summary(control_ranges: Optional[InputControlRanges]) -> None:
+    if control_ranges is None:
+        print(f"input controls: legacy defaults, fixed s={FIXED_S}, S={FIXED_CAP_S}")
+        return
+    print(
+        "input controls: "
+        f"inter_avg_scv={control_ranges.inter_avg_scv}, "
+        f"lead_scv={control_ranges.lead_scv}, "
+        f"mean_ratio={control_ranges.mean_ratio}, "
+        f"s={control_ranges.s}, S={control_ranges.S}, "
+        f"max_tries={control_ranges.max_tries}"
+    )
+
+
+def _run_partition_sampled_simulations(args, inv_dir: Path, order_dir: Path, loss_dir: Path) -> None:
+    partitions = _load_input_partitions(
+        csv_path=Path(args.partition_counts_csv),
+        max_num_files=int(args.partition_count_threshold),
+    )
+    rng = np.random.default_rng(args.seed)
+    meta_rng = np.random.default_rng(None if args.seed is None else args.seed + 9173)
+    saved_triplets: list[tuple[Path, Path, Path]] = []
+
+    print(
+        "partition-sampling mode: "
+        f"{len(partitions)} eligible rows with num_files < {args.partition_count_threshold}; "
+        f"running {args.partition_simulations} dynamic-demand simulations"
+    )
+
+    for idx in range(int(args.partition_simulations)):
+        partition = partitions[int(rng.integers(0, len(partitions)))]
+        control_ranges = _control_ranges_from_partition(partition, max_tries=int(args.control_max_tries))
+        s, S = _sample_policy_from_partition(partition, rng)
+        rep_seed = None if args.seed is None else int(rng.integers(0, 2**31 - 1))
+
+        lead_scv_range = _validate_float_range("lead_scv", control_ranges.lead_scv)
+        inter_avg_scv_range = _validate_float_range("inter_avg_scv", control_ranges.inter_avg_scv)
+        mean_ratio_range = _validate_float_range("mean_ratio", control_ranges.mean_ratio)
+        lead_time_ph = _generate_ph_with_size_sampling(
+            max_size=args.lead_size,
+            target_mean=1.0,
+            rng=rng,
+            scv_range=lead_scv_range,
+            max_tries=control_ranges.max_tries,
+        )
+        demand_plan = generate_dynamic_demand_plan(
+            inter_size=args.inter_size,
+            horizon=args.horizon,
+            rng=rng,
+            min_changes=2,
+            max_changes=10,
+            min_gap=5,
+            avg_scv_range=inter_avg_scv_range,
+            avg_mean_range=mean_ratio_range,
+            max_plan_tries=control_ranges.max_tries,
+        )
+        avg_inter_scv = dynamic_plan_average_scv(demand_plan, args.horizon)
+        lead_scv = _scv_from_moments(lead_time_ph.moments)
+        mean_ratio = dynamic_plan_average_mean(demand_plan, args.horizon) / float(lead_time_ph.moments[0])
+
+        print(
+            f"[partition run {idx + 1}/{args.partition_simulations}] selected before simulation -> "
+            f"test_set={partition.test_set}, source_count={partition.num_files}, "
+            f"D={partition.D}, L={partition.L}, rho={partition.rho}, S_part={partition.S}, s_part={partition.s}, "
+            f"avg_inter_scv={avg_inter_scv:.6g}, lead_scv={lead_scv:.6g}, "
+            f"mean_ratio={mean_ratio:.6g}, S={S}, s={s}",
+            flush=True,
+        )
+
+        inv, orders, lost, sample_plan = aggregate_replications_dynamic_demand(
+            inter_size=args.inter_size,
+            lead_time_ph=lead_time_ph,
+            s=s,
+            S=S,
+            n_replications=args.replications,
+            horizon=args.horizon,
+            seed=rep_seed,
+            min_changes=2,
+            max_changes=10,
+            min_gap=5,
+            demand_plan=demand_plan,
+        )
+        x = build_time_epoch_input_matrix(
+            horizon=args.horizon,
+            lead_time_ph=lead_time_ph,
+            s=s,
+            S=S,
+            demand_plan=sample_plan,
+        )
+
+        scv_leadtime = lead_scv_from_input_vector(x)
+        avg_inter_scv = average_inter_scv_from_input_vector(x)
+        avg_inter_mean = average_inter_mean_from_input_vector(x)
+        lead_mean = float(np.exp(x[0, 10]))
+        mean_ratio = avg_inter_mean / lead_mean
+        number_demand_rates = int(len(sample_plan.means))
+        model_num_i = int(meta_rng.integers(1, 1_000_001))
+
+        inv_path, order_path, loss_path = save_io_pickles(
+            x=x,
+            inv=inv,
+            order=orders,
+            loss=lost,
+            scv_leadtime=scv_leadtime,
+            number_demand_rates=number_demand_rates,
+            model_number=args.model_number,
+            S=S,
+            s=s,
+            model_num=model_num_i,
+            inv_dir=inv_dir,
+            order_dir=order_dir,
+            loss_dir=loss_dir,
+        )
+        saved_triplets.append((inv_path, order_path, loss_path))
+
+        print(
+            f"[partition run {idx + 1}/{args.partition_simulations}] "
+            f"test_set={partition.test_set}, source_count={partition.num_files}, "
+            f"D={partition.D}, L={partition.L}, rho={partition.rho}, S_part={partition.S}, s_part={partition.s}, "
+            f"s={s}, S={S}, rates={number_demand_rates}, "
+            f"avg_inter_scv={avg_inter_scv:.6g}, lead_scv={scv_leadtime:.6g}, mean_ratio={mean_ratio:.6g}"
+        )
+
+    print(f"Completed {len(saved_triplets)} partition-sampled settings and saved all pickle triplets.")
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description="Run PH (s,S) simulation and plot P(Inventory=level).")
     parser.add_argument("--inter-size", type=int, default=100, help="Max inter-demand PH size (sampled in 1..inter-size).")
@@ -1524,8 +2060,47 @@ def _parse_args():
         help="Output path for simulation-vs-analytic comparison figure.",
     )
     parser.add_argument("--show", action="store_true", help="Show the graph window.")
-    parser.add_argument("--s", type=int, default=FIXED_S, help=f"Fixed reorder point (must be {FIXED_S}).")
-    parser.add_argument("--S", type=int, default=FIXED_CAP_S, help=f"Fixed order-up-to level (must be {FIXED_CAP_S}).")
+    parser.add_argument("--s", type=int, default=None, help=f"Fixed reorder point (default: {FIXED_S}).")
+    parser.add_argument("--S", type=int, default=None, help=f"Fixed order-up-to level (default: {FIXED_CAP_S}).")
+    parser.add_argument("--s-min", type=int, default=None, help="Minimum sampled reorder point.")
+    parser.add_argument("--s-max", type=int, default=None, help="Maximum sampled reorder point.")
+    parser.add_argument("--S-min", type=int, default=None, help="Minimum sampled order-up-to level.")
+    parser.add_argument("--S-max", type=int, default=None, help="Maximum sampled order-up-to level.")
+    parser.add_argument("--inter-avg-scv-min", type=float, default=None, help="Minimum time-weighted average inter-demand SCV.")
+    parser.add_argument("--inter-avg-scv-max", type=float, default=None, help="Maximum time-weighted average inter-demand SCV.")
+    parser.add_argument("--lead-scv-min", type=float, default=None, help="Minimum lead-time SCV.")
+    parser.add_argument("--lead-scv-max", type=float, default=None, help="Maximum lead-time SCV.")
+    parser.add_argument(
+        "--mean-ratio-min",
+        type=float,
+        default=None,
+        help="Minimum average inter-demand mean divided by average lead-time mean; lead-time mean is 1 in controlled runs.",
+    )
+    parser.add_argument(
+        "--mean-ratio-max",
+        type=float,
+        default=None,
+        help="Maximum average inter-demand mean divided by average lead-time mean; lead-time mean is 1 in controlled runs.",
+    )
+    parser.add_argument("--control-max-tries", type=int, default=1000, help="Maximum attempts for constrained sampling.")
+    parser.add_argument(
+        "--partition-counts-csv",
+        type=str,
+        default=None,
+        help="CSV with Test Set,D,L,rho,S,s,num_files columns. Enables underrepresented partition sampling.",
+    )
+    parser.add_argument(
+        "--partition-count-threshold",
+        type=int,
+        default=100,
+        help="Only CSV rows with num_files below this value are sampled.",
+    )
+    parser.add_argument(
+        "--partition-simulations",
+        type=int,
+        default=5000,
+        help="Number of simulations to run in partition-sampling mode.",
+    )
     parser.add_argument("--model-number", type=int, default=0, help="Model number token used in file names.")
     parser.add_argument(
         "--model-num",
@@ -1577,6 +2152,7 @@ def _parse_args():
 
 def main():
     args = _parse_args()
+    control_ranges = _build_control_ranges(args)
     mode_count = int(args.exp_compare) + int(args.dynamic_demand) + int(args.exp_varying_compare)
     if mode_count > 1:
         raise ValueError("Use only one mode flag: --exp-compare, --exp-varying-compare, or --dynamic-demand.")
@@ -1584,12 +2160,18 @@ def main():
         raise ValueError("--n-settings must be >= 1.")
     if args.level < 0 or args.level > 30:
         raise ValueError("level must be between 0 and 30.")
-    if int(args.s) != FIXED_S or int(args.S) != FIXED_CAP_S:
-        raise ValueError(f"This script is fixed to s={FIXED_S} and S={FIXED_CAP_S}.")
+    if args.partition_simulations < 1:
+        raise ValueError("--partition-simulations must be >= 1.")
+    if args.partition_count_threshold < 1:
+        raise ValueError("--partition-count-threshold must be >= 1.")
     if (args.model_num is not None) and (not (1 <= args.model_num <= 1_000_000)):
         raise ValueError("--model-num must be in [1, 1000000].")
     if args.n_settings > 1 and args.model_num is not None:
         raise ValueError("--model-num is only valid for single-setting runs. Omit it when --n-settings>1.")
+    if args.partition_counts_csv is not None and args.model_num is not None:
+        raise ValueError("--model-num is not valid in partition-sampling mode.")
+    if args.partition_counts_csv is not None and (args.exp_compare or args.exp_varying_compare):
+        raise ValueError("Partition-sampling mode uses dynamic PH demand; do not combine it with exponential comparison modes.")
 
     print(
         "Running simulation with "
@@ -1606,10 +2188,16 @@ def main():
     loss_dir = Path(args.loss_dir) if args.loss_dir else (code_dir / "loss")
     print(f"pickle dirs -> inv: {inv_dir} | order: {order_dir} | loss: {loss_dir}")
 
+    if args.partition_counts_csv is not None:
+        _run_partition_sampled_simulations(args, inv_dir=inv_dir, order_dir=order_dir, loss_dir=loss_dir)
+        return
+
+    _print_control_summary(control_ranges)
+
     if args.n_settings > 1:
         saved_triplets: list[tuple[Path, Path, Path]] = []
         for idx in range(args.n_settings):
-            s, S = FIXED_S, FIXED_CAP_S
+            s, S = _sample_cli_policy(rng, control_ranges)
             rep_seed = None if args.seed is None else int(rng.integers(0, 2**31 - 1))
             mode_name = "baseline-ph"
 
@@ -1623,6 +2211,7 @@ def main():
                     n_replications=args.replications,
                     horizon=args.horizon,
                     seed=rep_seed,
+                    control_ranges=control_ranges,
                 )
                 number_demand_rates = int(len(sample_plan.means))
             elif args.exp_varying_compare:
@@ -1651,11 +2240,19 @@ def main():
                 inv = sim_inv
                 number_demand_rates = 1
             else:
-                inter_size_sample = _sample_ph_size(args.inter_size, rng)
-                inter = designated_ph_generator(size=inter_size_sample, target_mean=1.0, rng=rng)
-                lead_mean = float(rng.uniform(0.1, 10.0))
-                lead_size_sample = _sample_ph_size(args.lead_size, rng)
-                lead = designated_ph_generator(size=lead_size_sample, target_mean=lead_mean, rng=rng)
+                if control_ranges is None:
+                    inter_size_sample = _sample_ph_size(args.inter_size, rng)
+                    inter = designated_ph_generator(size=inter_size_sample, target_mean=1.0, rng=rng)
+                    lead_mean = float(rng.uniform(0.1, 10.0))
+                    lead_size_sample = _sample_ph_size(args.lead_size, rng)
+                    lead = designated_ph_generator(size=lead_size_sample, target_mean=lead_mean, rng=rng)
+                else:
+                    _x, inter, lead, s, S = generate_controlled_setting(
+                        inter_size=args.inter_size,
+                        lead_size=args.lead_size,
+                        rng=rng,
+                        control_ranges=control_ranges,
+                    )
                 x, inv, orders, lost = simulate_given_setting(
                     inter_demand_ph=inter,
                     lead_time_ph=lead,
@@ -1668,6 +2265,10 @@ def main():
                 number_demand_rates = 1
 
             scv_leadtime = lead_scv_from_input_vector(x)
+            avg_inter_scv = average_inter_scv_from_input_vector(x)
+            avg_inter_mean = average_inter_mean_from_input_vector(x)
+            lead_mean = float(np.exp(x[0, 10]))
+            mean_ratio = avg_inter_mean / lead_mean
             model_num_i = int(meta_rng.integers(1, 1_000_001))
 
             inv_path, order_path, loss_path = save_io_pickles(
@@ -1689,7 +2290,9 @@ def main():
             print(
                 f"[setting {idx + 1}/{args.n_settings}] saved -> "
                 f"mode={mode_name}, s={s}, S={S}, model_num={model_num_i}, "
-                f"n_demand_rates={number_demand_rates}"
+                f"n_demand_rates={number_demand_rates}, "
+                f"avg_inter_scv={avg_inter_scv:.6g}, lead_scv={scv_leadtime:.6g}, "
+                f"mean_ratio={mean_ratio:.6g}"
             )
             print(f"  inv: {inv_path}")
             print(f"  order: {order_path}")
@@ -1699,8 +2302,7 @@ def main():
         return
 
     if args.exp_varying_compare:
-        s_fixed = FIXED_S
-        S_fixed = FIXED_CAP_S
+        s_fixed, S_fixed = _sample_cli_policy(rng, control_ranges)
         print(
             "exponential varying-rate comparison mode: lead_rate=1, "
             f"random demand-rate changes over time, s={s_fixed}, S={S_fixed}"
@@ -1762,8 +2364,7 @@ def main():
         return
 
     if args.exp_compare:
-        s_fixed = FIXED_S
-        S_fixed = FIXED_CAP_S
+        s_fixed, S_fixed = _sample_cli_policy(rng, control_ranges)
         print(f"exponential comparison mode: demand_rate=1, lead_rate=1, s={s_fixed}, S={S_fixed}")
 
         x, sim_inv, orders, lost, analytic_inv = simulate_exponential_with_analytic(
@@ -1819,8 +2420,7 @@ def main():
         return
 
     if args.dynamic_demand:
-        s_fixed = FIXED_S
-        S_fixed = FIXED_CAP_S
+        s_fixed, S_fixed = _sample_cli_policy(rng, control_ranges)
         print(
             "dynamic-demand mode: lead-time mean fixed at 1; "
             f"random demand changes (2..10 points, min-gap=5), s={s_fixed}, S={S_fixed}"
@@ -1833,6 +2433,7 @@ def main():
             n_replications=args.replications,
             horizon=args.horizon,
             seed=args.seed,
+            control_ranges=control_ranges,
         )
         print("input matrix shape:", x.shape)
         print("inventory distribution shape:", inv.shape)
@@ -1843,6 +2444,12 @@ def main():
         print(
             "sample equivalent rates:",
             np.round(1.0 / np.array(sample_plan.means, dtype=float), 4).tolist(),
+        )
+        print(f"average inter-demand SCV: {average_inter_scv_from_input_vector(x):.6g}")
+        print(f"lead-time SCV: {lead_scv_from_input_vector(x):.6g}")
+        print(
+            "average mean inter-demand / average lead time: "
+            f"{average_inter_mean_from_input_vector(x) / float(np.exp(x[0, 10])):.6g}"
         )
 
         scv_leadtime = lead_scv_from_input_vector(x)
@@ -1877,15 +2484,7 @@ def main():
         print(f"saved graph: {args.output}")
         return
 
-    if args.S is None:
-        x, inv, orders, lost = simulate_single_setting(
-            inter_size=args.inter_size,
-            lead_size=args.lead_size,
-            n_replications=args.replications,
-            horizon=args.horizon,
-            seed=args.seed,
-        )
-    else:
+    if control_ranges is None:
         inter_size_sample = _sample_ph_size(args.inter_size, rng)
         inter = designated_ph_generator(size=inter_size_sample, target_mean=1.0, rng=rng)
         lead_mean = float(rng.uniform(0.1, 10.0))
@@ -1894,8 +2493,24 @@ def main():
         x, inv, orders, lost = simulate_given_setting(
             inter_demand_ph=inter,
             lead_time_ph=lead,
-            s=args.s,
-            S=args.S,
+            s=FIXED_S,
+            S=FIXED_CAP_S,
+            n_replications=args.replications,
+            horizon=args.horizon,
+            seed=args.seed,
+        )
+    else:
+        _x, inter, lead, s_controlled, S_controlled = generate_controlled_setting(
+            inter_size=args.inter_size,
+            lead_size=args.lead_size,
+            rng=rng,
+            control_ranges=control_ranges,
+        )
+        x, inv, orders, lost = simulate_given_setting(
+            inter_demand_ph=inter,
+            lead_time_ph=lead,
+            s=s_controlled,
+            S=S_controlled,
             n_replications=args.replications,
             horizon=args.horizon,
             seed=args.seed,
@@ -1908,6 +2523,12 @@ def main():
     s = int(round(float(x[0, -2])))
     S = int(round(float(x[0, -1])))
     print(f"sampled policy: s={s}, S={S}")
+    print(f"average inter-demand SCV: {average_inter_scv_from_input_vector(x):.6g}")
+    print(f"lead-time SCV: {lead_scv_from_input_vector(x):.6g}")
+    print(
+        "average mean inter-demand / average lead time: "
+        f"{average_inter_mean_from_input_vector(x) / float(np.exp(x[0, 10])):.6g}"
+    )
     if args.level > S:
         print(
             f"note: requested level={args.level} is above S={S}, "
