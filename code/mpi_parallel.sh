@@ -3,7 +3,7 @@
 #SBATCH --output=job4.out
 #SBATCH --error=job4.err
 #SBATCH --partition=cpu
-#SBATCH --ntasks=64
+#SBATCH --ntasks=180
 #SBATCH --time=48:00:00
 
 module load gcc openmpi hdf5/serial python/3
