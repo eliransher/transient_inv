@@ -29,6 +29,8 @@ except ImportError:
 
 FIXED_S = 4
 FIXED_CAP_S = 8
+SIM_S_MIN = 5
+SIM_S_MAX = 15
 PH_PERCENTILE_PROBS = np.array(
     [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.99],
     dtype=float,
@@ -559,14 +561,15 @@ def _load_input_partitions(csv_path: Path, max_num_files: int) -> list[InputPart
             raise ValueError(f"Partition CSV is missing required columns: {sorted(missing)}")
         for row in reader:
             num_files = int(row["num_files"])
-            if num_files < max_num_files:
+            S_label = str(row["S"]).strip()
+            if num_files < max_num_files and _S_range_from_partition(S_label) is not None:
                 partitions.append(
                     InputPartition(
                         test_set=int(row["Test Set"]),
                         D=str(row["D"]).strip(),
                         L=str(row["L"]).strip(),
                         rho=str(row["rho"]).strip(),
-                        S=str(row["S"]).strip(),
+                        S=S_label,
                         s=str(row["s"]).strip().lower(),
                         num_files=num_files,
                     )
@@ -591,17 +594,27 @@ def _range_from_threshold_label(
     raise ValueError(f"Unsupported threshold label: {label!r}")
 
 
-def _S_range_from_partition(label: str) -> Tuple[int, int]:
+def _S_range_from_partition(label: str) -> Optional[Tuple[int, int]]:
     normalized = str(label).replace(" ", "")
     if normalized == "<=15":
-        return 1, 15
-    if normalized == ">15":
-        return 16, 30
-    raise ValueError(f"Unsupported S partition label: {label!r}")
+        low, high = 1, 15
+    elif normalized == ">15":
+        low, high = 16, 30
+    else:
+        raise ValueError(f"Unsupported S partition label: {label!r}")
+
+    low = max(low, SIM_S_MIN)
+    high = min(high, SIM_S_MAX)
+    if low > high:
+        return None
+    return low, high
 
 
 def _sample_policy_from_partition(partition: InputPartition, rng: np.random.Generator) -> Tuple[int, int]:
-    S_low, S_high = _S_range_from_partition(partition.S)
+    S_range = _S_range_from_partition(partition.S)
+    if S_range is None:
+        raise ValueError(f"Partition test set {partition.test_set} has no S overlap with [{SIM_S_MIN}, {SIM_S_MAX}].")
+    S_low, S_high = S_range
     candidates: list[tuple[int, int]] = []
     for S in range(S_low, S_high + 1):
         midpoint = S / 2.0
@@ -699,8 +712,8 @@ def _sample_ph_size(max_size: int, rng: np.random.Generator) -> int:
 def _sample_unique_policies(
     n_policies: int,
     rng: np.random.Generator,
-    min_S: int = 5,
-    max_S: int = 30,
+    min_S: int = SIM_S_MIN,
+    max_S: int = SIM_S_MAX,
 ) -> list[tuple[int, int]]:
     """Sample (s, S) pairs with min_S <= S <= max_S and 1 <= s <= S.
 
@@ -1247,7 +1260,7 @@ def generate_random_setting(
     lead_size_sample = _sample_ph_size(lead_size, rng)
     lead_time_ph = designated_ph_generator(size=lead_size_sample, target_mean=lead_mean, rng=rng)
 
-    S = int(rng.integers(5, 31))
+    S = int(rng.integers(SIM_S_MIN, SIM_S_MAX + 1))
     s = int(rng.integers(1, S + 1))
 
     input_vector = build_input_vector(inter_demand_ph, lead_time_ph, s=s, S=S)
@@ -2524,7 +2537,7 @@ def main():
             demand_rate=1.0,
             lead_rate=1.0,
         )
-
+        print(x)
         print("input matrix shape:", x.shape)
         print("simulation inventory distribution shape:", sim_inv.shape)
         print("analytic inventory distribution shape:", analytic_inv.shape)

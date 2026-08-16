@@ -5,12 +5,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f9c82d18-51bb-43bd-9029-c62e837b0aad" name="Changes" comment="initail comit">
-      <change afterPath="$PROJECT_DIR$/code/val_set_counts_1.csv" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/code/inventory_simpy_ph.py" beforeDir="false" afterPath="$PROJECT_DIR$/code/inventory_simpy_ph.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/code/mpi_parallel.sh" beforeDir="false" afterPath="$PROJECT_DIR$/code/mpi_parallel.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/code/parallel_rgb.sh" beforeDir="false" afterPath="$PROJECT_DIR$/code/parallel_rgb.sh" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/code/ph_summary_table.py" beforeDir="false" afterPath="$PROJECT_DIR$/code/ph_summary_table.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -41,18 +37,18 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Python.inventory_accuracy_trials.executor&quot;: &quot;Run&quot;,
-    &quot;Python.inventory_simpy_ph (1).executor&quot;: &quot;Run&quot;,
-    &quot;Python.inventory_simpy_ph.executor&quot;: &quot;Run&quot;,
-    &quot;Python.ph_summary_table.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;C:/Users/Eshel/workspace/Elad_miklat&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.inventory_accuracy_trials.executor": "Run",
+    "Python.inventory_simpy_ph (1).executor": "Run",
+    "Python.inventory_simpy_ph.executor": "Run",
+    "Python.ph_summary_table.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "git-widget-placeholder": "main",
+    "last_opened_file_path": "C:/Users/Eshel/workspace/Elad_miklat",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
   <component name="RunManager" selected="Python.inventory_simpy_ph">
     <configuration name="inventory_accuracy_trials" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
       <module name="Elad_miklat" />
@@ -76,7 +72,7 @@
       <option name="INPUT_FILE" value="" />
       <method v="2" />
     </configuration>
-    <configuration name="inventory_simpy_ph (1)" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
+    <configuration name="inventory_simpy_ph" type="PythonConfigurationType" factoryName="Python" temporary="true" nameIsGenerated="true">
       <module name="Elad_miklat" />
       <option name="ENV_FILES" value="" />
       <option name="INTERPRETER_OPTIONS" value="" />
@@ -85,12 +81,12 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/code" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/code/inventory_simpy_ph.py" />
-      <option name="PARAMETERS" value="" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/inventory_simpy_ph.py" />
+      <option name="PARAMETERS" value="--S-min 5 --S-max 15 --s-min 2 --s-max 14 --partition-simulations 5000 --replications 1100 --horizon 100 --inter-size 100 --lead-size 100 --control-max-tries 1000 --inv-dir /home/elirans/scratch/elad_trans/training_data/inv_level_3 --order-dir /home/elirans/scratch/elad_trans/training_data/order_3 --loss-dir /home/elirans/scratch/elad_trans/training_data/loss_3" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
       <option name="MODULE_MODE" value="false" />
@@ -107,12 +103,12 @@
         <env name="PYTHONUNBUFFERED" value="1" />
       </envs>
       <option name="SDK_HOME" value="" />
-      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/code" />
       <option name="IS_MODULE_SDK" value="true" />
       <option name="ADD_CONTENT_ROOTS" value="true" />
       <option name="ADD_SOURCE_ROOTS" value="true" />
-      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/inventory_simpy_ph.py" />
-      <option name="PARAMETERS" value="--partition-counts-csv val_set_counts.csv --partition-simulations 5000 --replications 50000 --horizon 100 --inter-size 100 --lead-size 100 --control-max-tries 1000" />
+      <option name="SCRIPT_NAME" value="$PROJECT_DIR$/code/inventory_simpy_ph.py" />
+      <option name="PARAMETERS" value="--n-settings 4 --dynamic-demand --S-min 5 --S-max 15 --s-min 2 --s-max 14 --partition-simulations 5000 --replications 1100 --horizon 100 --inter-size 100 --lead-size 100 --control-max-tries 1000 --inv-dir /home/elirans/scratch/elad_trans/training_data/inv_level_3 --order-dir /home/elirans/scratch/elad_trans/training_data/order_3 --loss-dir /home/elirans/scratch/elad_trans/training_data/loss_3" />
       <option name="SHOW_COMMAND_LINE" value="false" />
       <option name="EMULATE_TERMINAL" value="false" />
       <option name="MODULE_MODE" value="false" />
@@ -144,14 +140,13 @@
     </configuration>
     <list>
       <item itemvalue="Python.inventory_accuracy_trials" />
-      <item itemvalue="Python.inventory_simpy_ph (1)" />
       <item itemvalue="Python.inventory_simpy_ph" />
       <item itemvalue="Python.ph_summary_table" />
     </list>
     <recent_temporary>
       <list>
         <item itemvalue="Python.inventory_simpy_ph" />
-        <item itemvalue="Python.inventory_simpy_ph (1)" />
+        <item itemvalue="Python.inventory_simpy_ph" />
         <item itemvalue="Python.ph_summary_table" />
       </list>
     </recent_temporary>
@@ -364,11 +359,48 @@
       <option name="project" value="LOCAL" />
       <updated>1782630333898</updated>
     </task>
-    <option name="localTasksCounter" value="25" />
+    <task id="LOCAL-00025" summary="initail comit">
+      <option name="closed" value="true" />
+      <created>1786880114183</created>
+      <option name="number" value="00025" />
+      <option name="presentableId" value="LOCAL-00025" />
+      <option name="project" value="LOCAL" />
+      <updated>1786880114183</updated>
+    </task>
+    <task id="LOCAL-00026" summary="initail comit">
+      <option name="closed" value="true" />
+      <created>1786880163687</created>
+      <option name="number" value="00026" />
+      <option name="presentableId" value="LOCAL-00026" />
+      <option name="project" value="LOCAL" />
+      <updated>1786880163687</updated>
+    </task>
+    <option name="localTasksCounter" value="27" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="initail comit" />
     <option name="LAST_COMMIT_MESSAGE" value="initail comit" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/code/inventory_simpy_ph.py</url>
+          <line>2598</line>
+          <option name="timeStamp" value="1" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/code/inventory_simpy_ph.py</url>
+          <line>2583</line>
+          <option name="timeStamp" value="2" />
+        </line-breakpoint>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/code/inventory_simpy_ph.py</url>
+          <line>2679</line>
+          <option name="timeStamp" value="4" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
   </component>
 </project>
