@@ -2240,7 +2240,7 @@ def _parse_args():
     parser.add_argument(
         "--partition-count-threshold",
         type=int,
-        default=100000,
+        default=100,
         help="Only CSV rows with num_files below this value are sampled.",
     )
     parser.add_argument(
