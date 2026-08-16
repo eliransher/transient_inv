@@ -3,6 +3,7 @@
 By default this script mixes several PH families to widen shape statistics:
 - base generator from inventory_simpy_ph.generate_random_ph
 - Erlang-like (low SCV)
+- Hyper-Erlang-like (mixtures of Erlang branch blocks)
 - hyperexponential-like (high SCV/heavy tails)
 - Coxian-like (asymmetric/heavy-tailed variants)
 
@@ -90,6 +91,45 @@ def _gen_hyperexp_ultra(size: int, target_mean: float, rng: np.random.Generator)
     return _compute_ph_moments(alpha, T, k_max=10)
 
 
+def _gen_hypererlang(size: int, target_mean: float, rng: np.random.Generator) -> np.ndarray:
+    """Hyper-Erlang PH: a mixture over independent Erlang branch blocks."""
+    if size <= 1:
+        return _gen_erlang_like(size=size, target_mean=target_mean)
+
+    max_blocks = min(6, max(2, size // 2 + 1))
+    n_blocks = int(rng.integers(2, max_blocks + 1))
+
+    cuts = np.sort(rng.choice(np.arange(1, size), size=n_blocks - 1, replace=False))
+    block_lengths = np.diff(np.concatenate(([0], cuts, [size]))).astype(int)
+    rng.shuffle(block_lengths)
+
+    alpha = np.zeros(size, dtype=float)
+    branch_probs = rng.dirichlet(np.full(n_blocks, 0.45, dtype=float))
+    rates = np.exp(rng.uniform(np.log(0.02), np.log(120.0), size=n_blocks))
+
+    slow_idx = int(np.argmin(rates))
+    rates[slow_idx] *= float(rng.uniform(0.01, 0.20))
+    p_slow = float(rng.uniform(0.01, 0.20))
+    branch_probs = (1.0 - p_slow) * branch_probs
+    branch_probs[slow_idx] += p_slow
+    branch_probs /= branch_probs.sum()
+
+    T = np.zeros((size, size), dtype=float)
+    offset = 0
+    for block_idx, block_len in enumerate(block_lengths):
+        rate = float(rates[block_idx])
+        alpha[offset] = branch_probs[block_idx]
+        for phase in range(block_len):
+            idx = offset + phase
+            T[idx, idx] = -rate
+            if phase < block_len - 1:
+                T[idx, idx + 1] = rate
+        offset += block_len
+
+    T = _scale_T_to_mean(alpha, T, target_mean=target_mean)
+    return _compute_ph_moments(alpha, T, k_max=10)
+
+
 def _gen_coxian_like(size: int, target_mean: float, rng: np.random.Generator) -> np.ndarray:
     alpha = np.zeros(size, dtype=float)
     alpha[0] = 1.0
@@ -168,8 +208,8 @@ def _sample_moments_wide(
     max_tries: int = 200,
 ) -> Tuple[np.ndarray, str]:
     """Sample PH moments from a diversified family mix."""
-    families = ("base", "erlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
-    probs = np.array([0.20, 0.14, 0.18, 0.16, 0.16, 0.16], dtype=float)
+    families = ("base", "erlang", "hypererlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
+    probs = np.array([0.18, 0.12, 0.16, 0.16, 0.14, 0.12, 0.12], dtype=float)
 
     for _ in range(max_tries):
         fam = forced_family if forced_family is not None else str(rng.choice(families, p=probs))
@@ -182,6 +222,8 @@ def _sample_moments_wide(
                 moments = _gen_hyperexp_heavy(size=size, target_mean=target_mean, rng=rng)
             elif fam == "hyperexp_ultra":
                 moments = _gen_hyperexp_ultra(size=size, target_mean=target_mean, rng=rng)
+            elif fam == "hypererlang":
+                moments = _gen_hypererlang(size=size, target_mean=target_mean, rng=rng)
             elif fam == "coxian_extreme":
                 moments = _gen_coxian_extreme(size=size, target_mean=target_mean, rng=rng)
             else:
@@ -223,7 +265,7 @@ def build_summary_table(
     if mode == "wide":
         # Ensure each batch includes low/medium/high-variability PH families.
         base_sched = np.array(
-            ["erlang", "base", "coxian", "hyperexp", "coxian_extreme", "hyperexp_ultra"],
+            ["erlang", "base", "hypererlang", "coxian", "hyperexp", "coxian_extreme", "hyperexp_ultra"],
             dtype=object,
         )
         reps = int(np.ceil(n_ph / base_sched.size))

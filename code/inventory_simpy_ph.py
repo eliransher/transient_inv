@@ -3,7 +3,7 @@
 The main entry-point for one setting is:
     simulate_single_setting(...)
 which returns:
-    - input_vector: shape (100, 22)
+    - input_vector: shape (100, 44)
     - inventory_distribution: shape (100, 31)
     - avg_orders_so_far: shape (100,)
     - avg_lost_sales_so_far: shape (100,)
@@ -22,8 +22,22 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 import simpy
 
+try:
+    from scipy.linalg import expm as _scipy_expm
+except ImportError:
+    _scipy_expm = None
+
 FIXED_S = 4
 FIXED_CAP_S = 8
+PH_PERCENTILE_PROBS = np.array(
+    [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 0.99],
+    dtype=float,
+)
+N_PH_MOMENTS = 10
+N_PH_PERCENTILES = int(PH_PERCENTILE_PROBS.size)
+S_INPUT_COL = 20
+CAP_S_INPUT_COL = 21
+INPUT_FEATURE_COUNT = 2 * N_PH_MOMENTS + 2 + 2 * N_PH_PERCENTILES
 
 
 @dataclass(frozen=True)
@@ -237,6 +251,44 @@ def _gen_hyperexp_ultra_ph(size: int, target_mean: float, rng: np.random.Generat
     return _ph_from_alpha_T(alpha=alpha, T=T, target_mean=target_mean)
 
 
+def _gen_hypererlang_ph(size: int, target_mean: float, rng: np.random.Generator) -> PHDistribution:
+    """Generate a Hyper-Erlang PH as a mixture of Erlang branch blocks."""
+    if size <= 1:
+        return _gen_erlang_like_ph(size=size, target_mean=target_mean)
+
+    max_blocks = min(6, max(2, size // 2 + 1))
+    n_blocks = int(rng.integers(2, max_blocks + 1))
+
+    cuts = np.sort(rng.choice(np.arange(1, size), size=n_blocks - 1, replace=False))
+    block_lengths = np.diff(np.concatenate(([0], cuts, [size]))).astype(int)
+    rng.shuffle(block_lengths)
+
+    alpha = np.zeros(size, dtype=float)
+    branch_probs = rng.dirichlet(np.full(n_blocks, 0.45, dtype=float))
+    rates = np.exp(rng.uniform(np.log(0.02), np.log(120.0), size=n_blocks))
+
+    slow_idx = int(np.argmin(rates))
+    rates[slow_idx] *= float(rng.uniform(0.01, 0.20))
+    p_slow = float(rng.uniform(0.01, 0.20))
+    branch_probs = (1.0 - p_slow) * branch_probs
+    branch_probs[slow_idx] += p_slow
+    branch_probs /= branch_probs.sum()
+
+    T = np.zeros((size, size), dtype=float)
+    offset = 0
+    for block_idx, block_len in enumerate(block_lengths):
+        rate = float(rates[block_idx])
+        alpha[offset] = branch_probs[block_idx]
+        for phase in range(block_len):
+            idx = offset + phase
+            T[idx, idx] = -rate
+            if phase < block_len - 1:
+                T[idx, idx + 1] = rate
+        offset += block_len
+
+    return _ph_from_alpha_T(alpha=alpha, T=T, target_mean=target_mean)
+
+
 def _gen_coxian_like_ph(size: int, target_mean: float, rng: np.random.Generator) -> PHDistribution:
     alpha = np.zeros(size, dtype=float)
     alpha[0] = 1.0
@@ -312,6 +364,90 @@ def _scv_from_moments(moments: np.ndarray) -> float:
         return float("inf")
     var = max(0.0, m2 - m1 * m1)
     return var / (m1 * m1)
+
+
+def _ph_cdf(ph: PHDistribution, t: float) -> float:
+    """Evaluate the PH CDF at t."""
+    if t <= 0:
+        return 0.0
+    one = np.ones(ph.alpha.shape[0], dtype=float)
+
+    if _scipy_expm is not None:
+        survival = float(ph.alpha @ _scipy_expm(ph.T * float(t)) @ one)
+        if not np.isfinite(survival):
+            survival = _ph_survival_uniformization(ph, t)
+    else:
+        survival = _ph_survival_uniformization(ph, t)
+
+    return float(np.clip(1.0 - survival, 0.0, 1.0))
+
+
+def _ph_survival_uniformization(
+    ph: PHDistribution,
+    t: float,
+    tol: float = 1e-13,
+    max_terms: int = 20000,
+) -> float:
+    """Evaluate PH survival by uniformizing the transient subgenerator."""
+    nu = float(np.max(-np.diag(ph.T)))
+    if nu <= 0:
+        return 1.0
+
+    x = nu * float(t)
+    if x > 700.0:
+        return 0.0
+
+    P = np.eye(ph.T.shape[0]) + ph.T / nu
+    pk = ph.alpha.copy()
+    w = np.exp(-x)
+    transient = w * pk
+
+    k_cap = int(min(max_terms, max(50, x + 14.0 * np.sqrt(max(x, 1e-12)) + 40.0)))
+    for k in range(1, k_cap + 1):
+        pk = pk @ P
+        w *= x / k
+        transient += w * pk
+        if (k > x) and (w < tol):
+            break
+
+    return float(np.clip(transient.sum(), 0.0, 1.0))
+
+
+def ph_percentiles(
+    ph: PHDistribution,
+    probs: np.ndarray = PH_PERCENTILE_PROBS,
+    iterations: int = 60,
+) -> np.ndarray:
+    """Return PH quantiles for probabilities in probs."""
+    probs = np.asarray(probs, dtype=float)
+    if probs.ndim != 1 or np.any(probs <= 0.0) or np.any(probs >= 1.0):
+        raise ValueError("Percentile probabilities must be a 1D array inside (0, 1).")
+    if np.any(np.diff(probs) < 0):
+        raise ValueError("Percentile probabilities must be sorted in ascending order.")
+
+    mean = max(float(ph.moments[0]), 1e-300)
+    out = np.zeros(probs.size, dtype=float)
+    low = 0.0
+
+    for idx, prob in enumerate(probs):
+        high = max(low, mean / max(1.0 - float(prob), 1e-12))
+        while _ph_cdf(ph, high) < prob:
+            high *= 2.0
+            if high > mean * 1e12:
+                raise RuntimeError(f"Could not bracket PH percentile {prob:.6g}.")
+
+        lo = low
+        hi = high
+        for _ in range(iterations):
+            mid = 0.5 * (lo + hi)
+            if _ph_cdf(ph, mid) >= prob:
+                hi = mid
+            else:
+                lo = mid
+        out[idx] = hi
+        low = hi
+
+    return out
 
 
 def _validate_float_range(name: str, value_range: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
@@ -505,8 +641,8 @@ def generate_random_ph_wide(
     if min_scv < 0 or max_scv < min_scv:
         raise ValueError("Need 0 <= min_scv <= max_scv.")
 
-    families = ("base", "erlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
-    probs = np.array([0.20, 0.14, 0.18, 0.16, 0.16, 0.16], dtype=float)
+    families = ("base", "erlang", "hypererlang", "hyperexp", "hyperexp_ultra", "coxian", "coxian_extreme")
+    probs = np.array([0.18, 0.12, 0.16, 0.16, 0.14, 0.12, 0.12], dtype=float)
 
     for _ in range(max_tries):
         fam = str(rng.choice(families, p=probs))
@@ -519,6 +655,8 @@ def generate_random_ph_wide(
                 ph = _gen_hyperexp_heavy_ph(size=size, target_mean=target_mean, rng=rng)
             elif fam == "hyperexp_ultra":
                 ph = _gen_hyperexp_ultra_ph(size=size, target_mean=target_mean, rng=rng)
+            elif fam == "hypererlang":
+                ph = _gen_hypererlang_ph(size=size, target_mean=target_mean, rng=rng)
             elif fam == "coxian":
                 ph = _gen_coxian_like_ph(size=size, target_mean=target_mean, rng=rng)
             else:
@@ -1122,15 +1260,19 @@ def build_input_vector(
     s: int,
     S: int,
 ) -> np.ndarray:
-    """Build one input row: [log(10 inter moments), log(10 lead moments), s, S]."""
+    """Build one input row with log-moments, policy, and raw percentile times."""
     eps = 1e-300
     inter_log = np.log(np.maximum(inter_demand_ph.moments, eps))
     lead_log = np.log(np.maximum(lead_time_ph.moments, eps))
+    inter_percentiles = ph_percentiles(inter_demand_ph)
+    lead_percentiles = ph_percentiles(lead_time_ph)
     return np.concatenate(
         [
             inter_log,
             lead_log,
             np.array([float(s), float(S)], dtype=float),
+            inter_percentiles,
+            lead_percentiles,
         ]
     )
 
@@ -1143,7 +1285,7 @@ def build_time_epoch_input_matrix(
     inter_demand_ph: Optional[PHDistribution] = None,
     demand_plan: Optional[DynamicDemandPlan] = None,
 ) -> np.ndarray:
-    """Build time-indexed input matrix x with shape (horizon, 22)."""
+    """Build time-indexed input matrix x with shape (horizon, 44)."""
     if horizon <= 0:
         raise ValueError("horizon must be positive.")
     if (inter_demand_ph is None) and (demand_plan is None):
@@ -1151,24 +1293,27 @@ def build_time_epoch_input_matrix(
     if (inter_demand_ph is not None) and (demand_plan is not None):
         raise ValueError("Provide only one of inter_demand_ph or demand_plan.")
 
-    x = np.zeros((horizon, 22), dtype=float)
+    x = np.zeros((horizon, INPUT_FEATURE_COUNT), dtype=float)
     if inter_demand_ph is not None:
         row = build_input_vector(inter_demand_ph, lead_time_ph, s=s, S=S)
         x[:] = row
         return x
 
     cps = np.array(demand_plan.change_points, dtype=int)
+    rows = [
+        build_input_vector(inter_ph, lead_time_ph, s=s, S=S)
+        for inter_ph in demand_plan.phs
+    ]
     seg_idx = 0
     for t in range(1, horizon + 1):
         while seg_idx < cps.size and t >= cps[seg_idx]:
             seg_idx += 1
-        row = build_input_vector(demand_plan.phs[seg_idx], lead_time_ph, s=s, S=S)
-        x[t - 1] = row
+        x[t - 1] = rows[seg_idx]
     return x
 
 
 def lead_scv_from_input_vector(x: np.ndarray) -> float:
-    """Extract lead-time SCV from x (supports shape (22,) or (T,22), with log-moments)."""
+    """Extract lead-time SCV from x (supports shape (44,) or (T,44), with log-moments)."""
     if x.ndim == 2:
         row = x[0]
     elif x.ndim == 1:
@@ -1285,7 +1430,7 @@ def simulate_single_setting(
     """Generate one random setting and simulate it.
 
     Returns:
-        input_vector: (100, 22)
+        input_vector: (100, 44)
         inventory_distribution: (100, 31)
         avg_orders_so_far: (100,)
         avg_lost_sales_so_far: (100,)
@@ -1328,7 +1473,7 @@ def simulate_multiple_settings(
     """Generate a dataset across multiple random settings.
 
     Returns:
-        X_inputs: (n_settings, 100, 22)
+        X_inputs: (n_settings, 100, 44)
         Y_inventory: (n_settings, 100, 31)
         Y_orders: (n_settings, 100)
         Y_lost_sales: (n_settings, 100)
@@ -1336,7 +1481,7 @@ def simulate_multiple_settings(
     master = np.random.SeedSequence(seed)
     setting_seeds = master.spawn(n_settings)
 
-    X_inputs = np.zeros((n_settings, horizon, 22), dtype=float)
+    X_inputs = np.zeros((n_settings, horizon, INPUT_FEATURE_COUNT), dtype=float)
     Y_inventory = np.zeros((n_settings, horizon, 31), dtype=float)
     Y_orders = np.zeros((n_settings, horizon), dtype=float)
     Y_lost = np.zeros((n_settings, horizon), dtype=float)
@@ -2095,7 +2240,7 @@ def _parse_args():
     parser.add_argument(
         "--partition-count-threshold",
         type=int,
-        default=100,
+        default=100000,
         help="Only CSV rows with num_files below this value are sampled.",
     )
     parser.add_argument(
@@ -2523,8 +2668,8 @@ def main():
     print("inventory distribution shape:", inv.shape)
     print("avg orders shape:", orders.shape)
     print("avg lost-sales shape:", lost.shape)
-    s = int(round(float(x[0, -2])))
-    S = int(round(float(x[0, -1])))
+    s = int(round(float(x[0, S_INPUT_COL])))
+    S = int(round(float(x[0, CAP_S_INPUT_COL])))
     print(f"sampled policy: s={s}, S={S}")
     print(f"average inter-demand SCV: {average_inter_scv_from_input_vector(x):.6g}")
     print(f"lead-time SCV: {lead_scv_from_input_vector(x):.6g}")
