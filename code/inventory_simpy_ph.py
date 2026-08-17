@@ -24,7 +24,7 @@ import simpy
 
 try:
     from scipy.linalg import expm as _scipy_expm
-except ImportError:
+except Exception:
     _scipy_expm = None
 
 FIXED_S = 4
@@ -375,9 +375,13 @@ def _ph_cdf(ph: PHDistribution, t: float) -> float:
     one = np.ones(ph.alpha.shape[0], dtype=float)
 
     if _scipy_expm is not None:
-        survival = float(ph.alpha @ _scipy_expm(ph.T * float(t)) @ one)
-        if not np.isfinite(survival):
+        try:
+            survival = float(ph.alpha @ _scipy_expm(ph.T * float(t)) @ one)
+        except Exception:
             survival = _ph_survival_uniformization(ph, t)
+        else:
+            if not np.isfinite(survival):
+                survival = _ph_survival_uniformization(ph, t)
     else:
         survival = _ph_survival_uniformization(ph, t)
 
