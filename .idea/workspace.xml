@@ -6,6 +6,7 @@
   <component name="ChangeListManager">
     <list default="true" id="f9c82d18-51bb-43bd-9029-c62e837b0aad" name="Changes" comment="initail comit">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/code/parallel_rgb.sh" beforeDir="false" afterPath="$PROJECT_DIR$/code/parallel_rgb.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -430,7 +431,15 @@
       <option name="project" value="LOCAL" />
       <updated>1786949609234</updated>
     </task>
-    <option name="localTasksCounter" value="31" />
+    <task id="LOCAL-00031" summary="initail comit">
+      <option name="closed" value="true" />
+      <created>1789028658871</created>
+      <option name="number" value="00031" />
+      <option name="presentableId" value="LOCAL-00031" />
+      <option name="project" value="LOCAL" />
+      <updated>1789028658871</updated>
+    </task>
+    <option name="localTasksCounter" value="32" />
     <servers />
   </component>
   <component name="VcsManagerConfiguration">
