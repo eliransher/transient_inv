@@ -8,4 +8,4 @@
 
 module load gcc openmpi hdf5/serial python/3
 source /home/elirans/project/queues/bin/activate
-mpirun python3 //home/elirans/project/transient_inv/code/inventory_simpy_ph.py --n-settings 5000 --dynamic-demand --S-min 5 --S-max 15 --s-min 2 --s-max 14  --partition-simulations 5000 --replications 110000 --horizon 100 --inter-size 100 --lead-size 100 --control-max-tries 1000 --inv-dir /home/elirans/scratch/elad_trans/training_data/inv_level_5 --order-dir /home/elirans/scratch/elad_trans/training_data/order_5 --loss-dir /home/elirans/scratch/elad_trans/training_data/loss_5
+mpirun python3 //home/elirans/project/transient_inv/code/inventory_simpy_ph.py --n-settings 5000 --dynamic-demand --S-min 5 --S-max 15 --s-min 2 --s-max 14  --partition-simulations 5000 --replications 110000 --horizon 100 --inter-size 100 --lead-size 100 --control-max-tries 1000 --inv-dir /home/elirans/scratch/elad_trans/training_data/inv_level_6 --order-dir /home/elirans/scratch/elad_trans/training_data/order_6 --loss-dir /home/elirans/scratch/elad_trans/training_data/loss_6
